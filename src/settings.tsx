@@ -23,6 +23,7 @@ export type Settings = {
   agentPath: string;
   agentModel: string;
   agentWidth: number;
+  agentLength: "brief" | "detail";
 };
 
 export const DEFAULTS: Settings = {
@@ -46,6 +47,7 @@ export const DEFAULTS: Settings = {
   agentPath: "",
   agentModel: "",
   agentWidth: 400,
+  agentLength: "brief",
 };
 
 function parse(raw: Record<string, string>): Settings {

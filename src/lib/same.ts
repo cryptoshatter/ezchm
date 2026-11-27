@@ -12,7 +12,7 @@ export function isIdent(w: string) {
 
 type CaretFn = (x: number, y: number, o?: { shadowRoots?: ShadowRoot[] }) => { offsetNode: Node; offset: number } | null;
 
-function hitText(x: number, y: number, el: Element): { node: Node; off: number } | null {
+export function hitText(x: number, y: number, el: Element): { node: Node; off: number } | null {
   const w = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
   const r = document.createRange();
   let n = 0;

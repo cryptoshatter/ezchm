@@ -5,6 +5,7 @@ import { renderMd } from "../lib/md";
 import { CODE_CSS, copyText, mountCodeBlock, type Block } from "../lib/codeblock";
 import { detectLang } from "../lib/detect";
 import { useSettings } from "../settings";
+import { hitText } from "../lib/same";
 import { showMenu } from "./ContextMenu";
 import { IconClose, IconPlus } from "./Icons";
 
@@ -57,8 +58,60 @@ function rangeText(r: Range) {
   return (f.textContent ?? "").replace(/\n{3,}/g, "\n\n");
 }
 
+type Pt = { x: number; y: number; el: Element | null };
+let lastDown: Pt | null = null;
+let lastUp: Pt | null = null;
+if (typeof window !== "undefined") {
+  window.addEventListener(
+    "mousedown",
+    (e) => {
+      if (e.button === 0) lastDown = { x: e.clientX, y: e.clientY, el: (e.composedPath()[0] as Element) ?? null };
+    },
+    true,
+  );
+  window.addEventListener(
+    "mouseup",
+    (e) => {
+      if (e.button === 0) lastUp = { x: e.clientX, y: e.clientY, el: (e.composedPath()[0] as Element) ?? null };
+    },
+    true,
+  );
+}
+
+function caret(p: Pt | null): { node: Node; off: number } | null {
+  if (!p?.el || p.el.nodeType !== 1) return null;
+  const scope = (p.el.closest(".line") ?? p.el) as Element;
+  if ((scope.textContent?.length ?? 0) > 4000) return null;
+  return hitText(p.x, p.y, scope);
+}
+
+function rangeFromPoints(): Range | null {
+  const a = caret(lastDown);
+  const b = caret(lastUp);
+  if (!a || !b) return null;
+  const r = document.createRange();
+  try {
+    r.setStart(a.node, a.off);
+    r.setEnd(a.node, a.off);
+    const r2 = document.createRange();
+    r2.setStart(b.node, b.off + 1 <= (b.node.nodeValue?.length ?? 0) ? b.off + 1 : b.off);
+    if (r.compareBoundaryPoints(Range.START_TO_START, r2) <= 0) r.setEnd(r2.startContainer, r2.startOffset);
+    else {
+      r.setStart(b.node, b.off);
+      r.setEnd(a.node, Math.min(a.off + 1, a.node.nodeValue?.length ?? a.off));
+    }
+  } catch {
+    return null;
+  }
+  return r.collapsed ? null : r;
+}
+
 export function selectionInfo(shadow?: ShadowRoot | null): SelInfo | null {
-  const r = selRange(shadow);
+  let r = selRange(shadow);
+  if (shadow && (!r || !shadow.contains(r.startContainer) || !shadow.contains(r.endContainer))) {
+    const p = rangeFromPoints();
+    if (p && shadow.contains(p.startContainer)) r = p;
+  }
   const sel = document.getSelection();
   let text = r ? rangeText(r) : "";
   if (!text.trim() && sel) text = sel.toString();
@@ -116,7 +169,7 @@ export function useAgent(opts: { source: () => string; fallback: () => SelInfo |
       if (f) rs = [{ id: refSeq++, text: f.text, lang: f.lang, lines: f.lines, source: o.current.source() }];
     }
     const first = !session.current;
-    const prompt = buildPrompt(t, rs, first, first ? o.current.source() : "");
+    const prompt = buildPrompt(t, rs, first, first ? o.current.source() : "", st.current.settings.agentLength !== "detail");
     const id = nextRunId();
     if (!opt.inline) {
       setOpen(true);
@@ -448,8 +501,8 @@ function rectOf(sel: SelInfo, fallback: { x: number; y: number }) {
       if (all.length) {
         const top = Math.min(...all.map((r) => r.top));
         const bottom = Math.max(...all.map((r) => r.bottom));
-        const first = all.find((r) => r.top === top) ?? all[0];
-        return { left: first.left, top, bottom };
+        const left = Math.min(...all.map((r) => r.left));
+        return { left, top, bottom };
       }
     }
   } catch {
@@ -494,7 +547,7 @@ export function useSelUI(getShadow: () => ShadowRoot | null) {
     if (!tb && !ask) return;
     const down = (e: MouseEvent) => {
       const t = e.composedPath()[0] as HTMLElement;
-      if (t?.closest?.(".sel-tb,.ask-pop,.ctx")) return;
+      if (t?.closest?.(".sel-tb,.ask-wrap,.ctx")) return;
       setTb(null);
       setAsk(null);
       setAskHighlight(null);
@@ -568,193 +621,303 @@ export function SelToolbar({ ui, agent }: { ui: SelUI; agent: AgentCtl }) {
   );
 }
 
-type Cmd = { id: string; label: string; group: string; prompt?: string; run?: () => void };
+const P = (d: string) => (
+  <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.35" strokeLinecap="round" strokeLinejoin="round">
+    <path d={d} />
+  </svg>
+);
+const IC: Record<string, React.ReactNode> = {
+  explain: P("M2.5 3.5h4a1.5 1.5 0 0 1 1.5 1.5v8a1.5 1.5 0 0 0-1.5-1.5h-4zM13.5 3.5h-4A1.5 1.5 0 0 0 8 5v8a1.5 1.5 0 0 1 1.5-1.5h4z"),
+  review: P("M7 12.5a5.5 5.5 0 1 1 0-11 5.5 5.5 0 0 1 0 11zM11 11l3.5 3.5M5 7h4M7 5v4"),
+  optimize: P("M3 13l7-7M9 3.5l.6 1.4 1.4.6-1.4.6L9 7.5l-.6-1.4L7 5.5l1.4-.6zM12.5 7.5l.4 1 1 .4-1 .4-.4 1-.4-1-1-.4 1-.4z"),
+  comment: P("M3 4h10M3 8h6M3 12h8M12 9.5l2 2-2 2"),
+  objects: P("M2.5 3.5h11v9h-11zM2.5 6.5h11M6.5 6.5v6"),
+  flow: P("M4 2.5v3M4 5.5h8v3M12 8.5v2M4 5.5v8M10.5 10.5h3v3h-3zM2.5 13.5h3"),
+  testdata: P("M8 2.5c3 0 5.5.9 5.5 2s-2.5 2-5.5 2-5.5-.9-5.5-2 2.5-2 5.5-2zM2.5 4.5v7c0 1.1 2.5 2 5.5 2s5.5-.9 5.5-2v-7M2.5 8c0 1.1 2.5 2 5.5 2s5.5-.9 5.5-2"),
+  convert: P("M3 5.5h9.5M10 3l2.5 2.5L10 8M13 10.5H3.5M6 8l-2.5 2.5L6 13"),
+  more: P("M3.5 8h.01M8 8h.01M12.5 8h.01"),
+  free: P("M2.5 8h9M8.5 4.5 12 8l-3.5 3.5"),
+  quote: P("M4 4.5h3v3c0 2-1 3-3 3.5M9.5 4.5h3v3c0 2-1 3-3 3.5"),
+  replace: P("M3 8.5l3 3 7-7"),
+  copy: P("M5.5 5.5h7v8h-7zM3.5 10.5v-8h6"),
+  retry: P("M13 8a5 5 0 1 1-1.5-3.5M13 2.5v3h-3"),
+  side: P("M2.5 3h11v10h-11zM9.5 3v10"),
+  discard: P("M3 4.5h10M6.5 4.5V3h3v1.5M4.5 4.5l.6 8.5h5.8l.6-8.5"),
+};
+
+type Item = { id: string; label: string; icon: string; prompt?: string; run?: () => void; danger?: boolean };
 
 function firstCode(md: string) {
   const m = md.match(/(^|\n)\s*(`{3,}|~{3,})[^\n]*\n([\s\S]*?)\n\s*\2/);
   return m ? m[3] : null;
 }
 
+const PRIMARY = ["explain", "review", "optimize", "comment", "objects"];
+
 export function AskPopover({ ui, agent, onReplace }: { ui: SelUI; agent: AgentCtl; onReplace?: (sel: SelInfo, code: string) => void }) {
   const a = ui.ask;
   const [q, setQ] = useState("");
   const [act, setAct] = useState(0);
+  const [more, setMore] = useState(false);
   const input = useRef<HTMLInputElement>(null);
   const body = useRef<HTMLDivElement>(null);
-  const box = useRef<HTMLDivElement>(null);
+  const wrap = useRef<HTMLDivElement>(null);
+  const listEl = useRef<HTMLDivElement>(null);
   const [h, setH] = useState(0);
-
-  useEffect(() => {
-    setQ("");
-    setAct(0);
-    window.setTimeout(() => input.current?.focus(), 0);
-  }, [a?.start, a?.sel]);
+  const stick = useRef(true);
+  const prev = useRef<{ open: boolean; busy: boolean }>({ open: false, busy: false });
 
   const msgs = a ? agent.msgs.slice(a.start) : [];
   const chat = msgs.length > 0;
   const last = msgs[msgs.length - 1];
   const busy = agent.running != null;
 
+  useEffect(() => {
+    setQ("");
+    setAct(0);
+    setMore(false);
+    stick.current = true;
+    if (a) window.setTimeout(() => input.current?.focus(), 0);
+  }, [a?.start, a?.sel]);
+
+  useEffect(() => {
+    if (!a) return;
+    if (busy) wrap.current?.focus();
+    else {
+      setAct(0);
+      window.setTimeout(() => input.current?.focus(), 0);
+    }
+  }, [busy]);
+
+  useEffect(() => {
+    if (prev.current.open && !a && prev.current.busy) agent.setOpen(true);
+    prev.current = { open: !!a, busy };
+  }, [a, busy]);
+
   useLayoutEffect(() => {
     const b = body.current;
-    if (b) b.scrollTop = b.scrollHeight;
-    if (box.current) setH(box.current.offsetHeight);
+    if (b && stick.current) b.scrollTop = b.scrollHeight;
+    const w = wrap.current;
+    if (w) {
+      const bh = body.current ? Math.min(body.current.scrollHeight, window.innerHeight * 0.46, 420) + 1 : 0;
+      const ih = (w.querySelector(".ask-in") as HTMLElement | null)?.offsetHeight ?? 44;
+      const lh = listEl.current ? Math.min(listEl.current.scrollHeight, 300) + 6 : 0;
+      const nat = Math.round(bh + ih + lh);
+      if (Math.abs(nat - h) > 2) setH(nat);
+    }
   });
 
-  const cmds: Cmd[] = useMemo(
+  useEffect(() => {
+    listEl.current?.querySelector(".ask-item.on")?.scrollIntoView({ block: "nearest" });
+  }, [act]);
+
+  const cmds: Item[] = useMemo(
     () => [
-      ...[ACTIONS[0], ACTIONS[5], ACTIONS[4]].map((x) => ({ id: x.id, label: x.label, prompt: x.prompt, group: "理解" })),
-      ...[ACTIONS[2], ACTIONS[3], ACTIONS[1]].map((x) => ({ id: x.id, label: x.label, prompt: x.prompt, group: "审阅与改写" })),
-      { id: ACTIONS[6].id, label: ACTIONS[6].label, prompt: ACTIONS[6].prompt, group: "生成" },
-      ...CONVERT_TARGETS.map((t) => ({ id: "cv-" + t, label: `转为 ${t}`, prompt: convertPrompt(t), group: "方言转换" })),
+      ...ACTIONS.map((x) => ({ id: x.id, label: x.label, icon: x.id, prompt: x.prompt })),
+      ...CONVERT_TARGETS.map((t) => ({ id: "cv-" + t, label: `转为 ${t}`, icon: "convert", prompt: convertPrompt(t) })),
     ],
     [],
   );
-  const list = useMemo(() => {
-    const k = q.trim().toLowerCase();
-    const m = k ? cmds.filter((c) => c.label.toLowerCase().includes(k) || c.group.includes(k)) : cmds;
-    return k ? [...m, { id: "free", label: `提问：${q.trim()}`, group: "", prompt: q.trim() }] : m;
-  }, [q, cmds]);
+  const labelOf = (text: string) => cmds.find((c) => c.prompt === text)?.label ?? text;
 
   if (!a) return null;
 
-  const r = rectOf(a.sel, a.mouse);
-  const W = Math.min(520, window.innerWidth - 16);
-  const left = Math.max(8, Math.min(r.left, window.innerWidth - W - 8));
-  const room = window.innerHeight - r.bottom - 12;
-  const top = room >= Math.min(h || 320, 320) ? r.bottom + 8 : Math.max(8, r.top - (h || 320) - 8);
-
   const send = (prompt: string) => {
     if (!prompt.trim() || busy) return;
+    stick.current = true;
     if (chat) agent.send(prompt, { inline: true });
     else agent.send(prompt, { sel: a.sel, inline: true });
     setQ("");
     setAct(0);
   };
 
+  const code = !busy && last?.role === "assistant" && last.done ? firstCode(last.text) : null;
+  const k = q.trim().toLowerCase();
+  let items: Item[];
+  if (!chat) {
+    if (k) {
+      items = [...cmds.filter((c) => c.label.toLowerCase().includes(k)), { id: "free", label: `提问「${q.trim()}」`, icon: "free", prompt: q.trim() }];
+    } else {
+      const prim = PRIMARY.map((id) => cmds.find((c) => c.id === id)!);
+      items = more ? [...prim, ...cmds.filter((c) => !PRIMARY.includes(c.id))] : [...prim, { id: "more", label: "更多", icon: "more", run: () => setMore(true) }];
+      items.push({
+        id: "quote",
+        label: "引用到侧栏",
+        icon: "quote",
+        run: () => {
+          agent.addRef(a.sel);
+          ui.closeAsk();
+        },
+      });
+    }
+  } else if (!busy && last?.done && !k) {
+    const li = agent.msgs.length - 2;
+    const lastQ = agent.msgs[li];
+    items = [
+      ...(code && onReplace
+        ? [
+            {
+              id: "replace",
+              label: "替换选中内容",
+              icon: "replace",
+              run: () => {
+                onReplace(a.sel, code);
+                ui.closeAsk();
+              },
+            },
+          ]
+        : []),
+      ...(code ? [{ id: "copycode", label: "复制代码", icon: "copy", run: () => copyText(code) }] : []),
+      ...(!code && last.text ? [{ id: "copy", label: "复制回答", icon: "copy", run: () => copyText(last.text) }] : []),
+      {
+        id: "retry",
+        label: "重试",
+        icon: "retry",
+        run: () => {
+          if (!lastQ || lastQ.role !== "user") return;
+          stick.current = true;
+          agent.truncate(li);
+          agent.send(lastQ.text, li === a.start ? { sel: a.sel, inline: true } : { inline: true });
+        },
+      },
+      {
+        id: "side",
+        label: "转到侧栏",
+        icon: "side",
+        run: () => {
+          agent.setOpen(true);
+          ui.closeAsk();
+        },
+      },
+      {
+        id: "discard",
+        label: "丢弃",
+        icon: "discard",
+        danger: true,
+        run: () => {
+          agent.truncate(a.start);
+          ui.closeAsk();
+        },
+      },
+    ];
+  } else items = [];
+
+  const runItem = (it: Item) => {
+    if (it.run) it.run();
+    else if (it.prompt) send(it.prompt);
+  };
+
   const onKey = (e: React.KeyboardEvent) => {
     if (e.nativeEvent.isComposing) return;
     if (e.key === "Escape") {
       e.preventDefault();
+      e.stopPropagation();
       if (busy) agent.stop();
       else ui.closeAsk();
-    } else if (!chat && e.key === "ArrowDown") {
+      return;
+    }
+    if (e.target !== input.current) return;
+    if (items.length && e.key === "ArrowDown") {
       e.preventDefault();
-      setAct((i) => Math.min(list.length - 1, i + 1));
-    } else if (!chat && e.key === "ArrowUp") {
+      setAct((i) => (i + 1) % items.length);
+    } else if (items.length && e.key === "ArrowUp") {
       e.preventDefault();
-      setAct((i) => Math.max(0, i - 1));
+      setAct((i) => (i - 1 + items.length) % items.length);
     } else if (e.key === "Enter") {
       e.preventDefault();
-      if (!chat && list[act]?.prompt) send(list[act].prompt!);
+      if (items[act]) runItem(items[act]);
       else send(q);
     }
   };
 
-  const code = last?.done && last.role === "assistant" ? firstCode(last.text) : null;
-  let group = "";
+  const r = rectOf(a.sel, a.mouse);
+  const W = Math.min(440, window.innerWidth - 16);
+  const left = Math.max(8, Math.min(r.left - 4, window.innerWidth - W - 8));
+  const H = h || 300;
+  const below = window.innerHeight - r.bottom - 14;
+  const above = r.top - 14;
+  let top: number;
+  let maxH: number | undefined;
+  if (below >= H) top = r.bottom + 6;
+  else if (above >= H) top = r.top - H - 6;
+  else if (Math.max(below, above) >= 220) {
+    maxH = Math.max(below, above);
+    top = below >= above ? r.bottom + 6 : 8 + Math.max(0, above - Math.min(H, maxH));
+  } else top = Math.max(8, Math.min(r.bottom + 6, window.innerHeight - H - 8));
+
+  const thinking = busy && last?.role === "assistant";
 
   return (
-    <div className="ask-pop" ref={box} style={{ left, top, width: W }}>
-      {chat && (
-        <div className="ask-body" ref={body}>
-          {msgs.map((m, i) =>
-            m.role === "user" ? (
-              <div key={i} className="ask-q">
-                {cmds.find((c) => c.prompt === m.text)?.label ?? m.text}
-              </div>
-            ) : (
-              <div key={i} className="ask-a">
-                {m.text ? <Answer msg={m} /> : !m.error && <div className="ag-wait"><span /><span /><span /></div>}
-                {m.error && <div className="ag-error">{m.error}</div>}
-              </div>
-            ),
-          )}
-        </div>
-      )}
-      <div className="ask-in">
-        <span className="ask-spark">{ICON_SPARK}</span>
-        <input
-          ref={input}
-          value={q}
-          placeholder={busy ? "生成中… Esc 停止" : chat ? "继续追问" : "让 AI 做什么"}
-          onChange={(e) => {
-            setQ(e.target.value);
-            setAct(0);
-          }}
-          onKeyDown={onKey}
-          spellCheck={false}
-        />
-        {busy ? (
-          <button className="ag-send stop" title="停止" onClick={agent.stop}>
-            <span />
-          </button>
-        ) : (
-          <button className="ag-send" disabled={!q.trim()} onClick={() => send(q)}>
-            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M8 13V3M3.5 7.5 8 3l4.5 4.5" />
-            </svg>
-          </button>
+    <div className="ask-wrap" ref={wrap} tabIndex={-1} style={{ left, top, width: W, maxHeight: maxH }} onKeyDown={onKey}>
+      <div className="ask-card">
+        {chat && (
+          <div
+            className="ask-body"
+            ref={body}
+            onScroll={(e) => {
+              const b = e.currentTarget;
+              stick.current = b.scrollHeight - b.scrollTop - b.clientHeight < 30;
+            }}
+          >
+            {msgs.map((m, i) =>
+              m.role === "user" ? (
+                <div key={i} className="ask-q">
+                  {labelOf(m.text)}
+                  {i === 0 && a.sel.lines && <span>{a.sel.lines}</span>}
+                </div>
+              ) : (
+                <div key={i} className="ask-a">
+                  {m.text && <Answer msg={m} />}
+                  {m.error && <div className="ag-error">{m.error}</div>}
+                </div>
+              ),
+            )}
+          </div>
         )}
-      </div>
-      {chat && !busy && last?.done && (
-        <div className="ask-ops">
-          {code && onReplace && (
-            <button
-              className="primary"
-              onClick={() => {
-                onReplace(a.sel, code);
-                ui.closeAsk();
+        <div className={`ask-in ${thinking ? "busy" : ""}`}>
+          <span className="ask-spark">{ICON_SPARK}</span>
+          {thinking ? (
+            <span className="ask-thinking">{last?.tool ? `正在调用 ${last.tool}` : last?.text ? "AI 正在写" : "AI 正在思考"}</span>
+          ) : (
+            <input
+              ref={input}
+              value={q}
+              placeholder={chat ? "继续追问…" : "让 AI 处理选中内容…"}
+              onChange={(e) => {
+                setQ(e.target.value);
+                setAct(0);
               }}
-            >
-              替换选中内容
+              spellCheck={false}
+            />
+          )}
+          {thinking ? (
+            <button className="ask-stop" onClick={agent.stop} title="停止 Esc">
+              停止 <kbd>Esc</kbd>
+            </button>
+          ) : (
+            <button className="ag-send" disabled={!q.trim()} onClick={() => send(q)} title="发送 ↵">
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M8 13V3M3.5 7.5 8 3l4.5 4.5" />
+              </svg>
             </button>
           )}
-          {code && <button onClick={() => copyText(code)}>复制代码</button>}
-          <button onClick={() => copyText(last.text)}>复制回答</button>
-          <button
-            onClick={() => {
-              agent.setOpen(true);
-              ui.closeAsk();
-            }}
-          >
-            转到侧栏
-          </button>
-          <button
-            className="danger"
-            onClick={() => {
-              agent.truncate(a.start);
-              ui.closeAsk();
-            }}
-          >
-            丢弃
-          </button>
         </div>
-      )}
-      {!chat && (
-        <div className="ask-menu">
-          {list.map((c, i) => {
-            const head = c.group && c.group !== group ? c.group : null;
-            group = c.group;
-            return (
-              <div key={c.id}>
-                {head && <div className="ask-group">{head}</div>}
-                <button className={`ask-item ${i === act ? "on" : ""}`} onMouseEnter={() => setAct(i)} onClick={() => c.prompt && send(c.prompt)}>
-                  {c.label}
-                </button>
-              </div>
-            );
-          })}
-          <div className="ask-group">其他</div>
-          <button
-            className="ask-item"
-            onClick={() => {
-              agent.addRef(a.sel);
-              ui.closeAsk();
-            }}
-          >
-            引用到侧栏
-          </button>
+      </div>
+      {items.length > 0 && (
+        <div className="ask-list" ref={listEl}>
+          {items.map((it, i) => (
+            <button
+              key={it.id}
+              className={`ask-item ${i === act ? "on" : ""} ${it.danger ? "danger" : ""}`}
+              onMouseMove={() => i !== act && setAct(i)}
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => runItem(it)}
+            >
+              <span className="ask-ic">{IC[it.icon]}</span>
+              <span className="ask-label">{it.label}</span>
+              {i === act && <kbd>↵</kbd>}
+            </button>
+          ))}
         </div>
       )}
     </div>

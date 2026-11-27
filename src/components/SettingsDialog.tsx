@@ -143,6 +143,9 @@ export default function SettingsDialog({ onClose }: { onClose: () => void }) {
           <Row label="Claude Code 路径">
             <PathInput value={s.agentPath} onChange={S("agentPath")} />
           </Row>
+          <Row label="回答长度">
+            <Seg value={s.agentLength} onChange={S("agentLength")} options={[{ id: "brief", name: "简洁" }, { id: "detail", name: "详细" }]} />
+          </Row>
 
           <h4>关于</h4>
           <Row label="版本">

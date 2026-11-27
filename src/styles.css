@@ -17,6 +17,10 @@
   --write: #d9730d;
   --code-border: #e7e6e3;
   --shadow: 0 10px 40px rgba(0, 0, 0, 0.18);
+  --ai: #9065b0;
+  --pop-ring: rgba(15, 15, 15, 0.06);
+  --pop-sh1: rgba(15, 15, 15, 0.07);
+  --pop-sh2: rgba(15, 15, 15, 0.14);
   color-scheme: light;
 }
 
@@ -38,6 +42,10 @@
   --write: #f0a050;
   --code-border: #2c2f35;
   --shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+  --ai: #b48ed6;
+  --pop-ring: rgba(255, 255, 255, 0.09);
+  --pop-sh1: rgba(0, 0, 0, 0.25);
+  --pop-sh2: rgba(0, 0, 0, 0.45);
   color-scheme: dark;
 }
 
@@ -1662,11 +1670,10 @@ select {
   align-items: center;
   gap: 1px;
   padding: 3px;
-  border-radius: 8px;
+  border-radius: 9px;
   background: var(--bg);
-  border: 1px solid var(--line);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06), 0 6px 20px rgba(0, 0, 0, 0.12);
-  animation: ctxin 0.1s ease-out;
+  box-shadow: 0 0 0 1px var(--pop-ring), 0 3px 6px var(--pop-sh1), 0 9px 24px var(--pop-sh2);
+  animation: askin 0.12s cubic-bezier(0.2, 0.9, 0.3, 1);
   font-size: 13px;
 }
 
@@ -1692,14 +1699,10 @@ select {
 }
 
 .sel-tb .sel-ai {
-  color: #9065b0;
+  color: var(--ai);
   font-weight: 600;
 }
 
-:root[data-theme="dark"] .sel-tb .sel-ai,
-:root[data-theme="dark"] .ask-spark {
-  color: #b48ed6;
-}
 
 .sel-sep {
   width: 1px;
@@ -1708,66 +1711,125 @@ select {
   margin: 0 3px;
 }
 
-.ask-pop {
+.ask-wrap {
   position: fixed;
   z-index: 950;
   display: flex;
   flex-direction: column;
-  max-height: min(560px, calc(100vh - 16px));
-  border-radius: 10px;
+  gap: 6px;
+  outline: none;
+  animation: askin 0.14s cubic-bezier(0.2, 0.9, 0.3, 1);
+  font-size: 13.5px;
+}
+
+@keyframes askin {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.99);
+  }
+}
+
+.ask-card,
+.ask-list {
   background: var(--bg);
-  border: 1px solid var(--line);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06), 0 12px 36px rgba(0, 0, 0, 0.16);
-  animation: ctxin 0.12s ease-out;
+  border-radius: 10px;
+  box-shadow: 0 0 0 1px var(--pop-ring), 0 3px 6px var(--pop-sh1), 0 9px 24px var(--pop-sh2);
+}
+
+.ask-card {
+  display: flex;
+  flex-direction: column;
   overflow: hidden;
+  flex: 0 1 auto;
+  min-height: 0;
 }
 
 .ask-body {
-  flex: 1 1 auto;
-  min-height: 0;
+  flex: 0 1 auto;
+  min-height: 60px;
+  max-height: min(46vh, 420px);
   overflow-y: auto;
-  padding: 12px 14px 4px;
+  padding: 12px 16px 6px;
   user-select: text;
   -webkit-user-select: text;
   cursor: auto;
-  font-size: 13.5px;
   line-height: 1.7;
+  overscroll-behavior: contain;
 }
 
 .ask-q {
-  color: var(--muted);
-  font-size: 12.5px;
-  margin: 6px 0;
-  padding-left: 8px;
-  border-left: 2px solid var(--line);
-  white-space: pre-wrap;
-}
-
-.ask-a + .ask-q {
-  margin-top: 12px;
-}
-
-.ask-in {
-  flex: 0 0 auto;
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 7px 7px 7px 12px;
-  border-top: 1px solid transparent;
+  color: var(--muted);
+  font-size: 12px;
+  margin: 2px 0 6px;
+}
+
+.ask-q span {
+  font-family: var(--code-font);
+  font-size: 11px;
+  opacity: 0.8;
+}
+
+.ask-a + .ask-q {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--line);
+}
+
+.ask-a .ag-md p:first-child {
+  margin-top: 0;
+}
+
+.ask-a .ez-code {
+  margin: 8px 0;
+  border-radius: 8px;
+}
+
+.ask-a .ez-bar .ez-btn:not(.ez-copy),
+.ask-a .ez-ft,
+.ask-a .ez-fb {
+  display: none !important;
+}
+
+.ask-a .ez-lang {
+  pointer-events: none;
+}
+
+.ask-in {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 44px;
+  padding: 6px 7px 6px 13px;
 }
 
 .ask-body + .ask-in {
-  border-top-color: var(--line);
+  border-top: 1px solid var(--line);
 }
 
 .ask-spark {
-  color: #9065b0;
+  color: var(--ai);
   display: grid;
   place-items: center;
+  flex: 0 0 auto;
+}
+
+.ask-in.busy .ask-spark {
+  animation: askpulse 1.2s ease-in-out infinite;
+}
+
+@keyframes askpulse {
+  50% {
+    opacity: 0.35;
+    transform: scale(0.85);
+  }
 }
 
 .ask-in input {
   flex: 1;
+  min-width: 0;
   border: 0;
   outline: none;
   background: transparent;
@@ -1775,59 +1837,101 @@ select {
   padding: 4px 0;
 }
 
-.ask-ops {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  padding: 0 10px 9px;
+.ask-in input::placeholder {
+  color: var(--muted);
+  opacity: 0.8;
 }
 
-.ask-ops button {
-  border: 1px solid var(--line);
-  background: var(--bg);
+.ask-thinking {
+  flex: 1;
+  color: var(--ai);
+  font-size: 13.5px;
+  background: linear-gradient(90deg, var(--ai) 0%, color-mix(in srgb, var(--ai) 35%, transparent) 50%, var(--ai) 100%);
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: askshine 1.6s linear infinite;
+}
+
+@keyframes askshine {
+  to {
+    background-position: -200% 0;
+  }
+}
+
+.ask-stop {
+  border: 0;
+  background: var(--soft);
+  color: var(--fg);
   border-radius: 6px;
-  padding: 3px 10px;
-  font-size: 12.5px;
+  padding: 4px 8px;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
-.ask-ops button:hover {
+.ask-stop:hover {
   background: var(--hover);
 }
 
-.ask-ops button.primary {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: #fff;
+.ask-stop kbd,
+.ask-item kbd {
+  font-family: inherit;
+  font-size: 11px;
+  color: var(--muted);
 }
 
-.ask-ops button.danger {
-  color: #d1453b;
-  margin-left: auto;
-}
-
-.ask-menu {
-  border-top: 1px solid var(--line);
-  padding: 4px;
+.ask-list {
+  flex: 0 0 auto;
+  align-self: flex-start;
+  width: 260px;
   max-height: 300px;
   overflow-y: auto;
-}
-
-.ask-group {
-  font-size: 11.5px;
-  color: var(--muted);
-  padding: 8px 10px 3px;
+  padding: 5px;
 }
 
 .ask-item {
   width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 9px;
   border: 0;
   background: transparent;
   text-align: left;
-  padding: 5px 10px;
-  border-radius: 5px;
-  font-size: 13px;
+  height: 30px;
+  padding: 0 9px;
+  border-radius: 6px;
+  font-size: 13.5px;
+  color: var(--fg);
 }
 
 .ask-item.on {
   background: var(--hover);
+}
+
+.ask-ic {
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  width: 18px;
+  flex: 0 0 auto;
+}
+
+.ask-item.on .ask-ic {
+  color: var(--fg);
+}
+
+.ask-label {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ask-item.danger,
+.ask-item.danger .ask-ic {
+  color: #d1453b;
 }
