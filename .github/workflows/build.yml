@@ -30,7 +30,7 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-apple-darwin,x86_64-apple-darwin
+          targets: aarch64-apple-darwin
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -53,9 +53,9 @@ jobs:
       - name: 打包
         run: |
           if [ -n "$TAURI_SIGNING_PRIVATE_KEY" ]; then
-            npx tauri build --target universal-apple-darwin
+            npx tauri build --target aarch64-apple-darwin
           else
-            npx tauri build --target universal-apple-darwin --config '{"bundle":{"createUpdaterArtifacts":false}}'
+            npx tauri build --target aarch64-apple-darwin --config '{"bundle":{"createUpdaterArtifacts":false}}'
           fi
 
       - name: 发布到 ezchm-releases
@@ -63,25 +63,25 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
         run: |
-          B="src-tauri/target/universal-apple-darwin/release/bundle"
+          B="src-tauri/target/aarch64-apple-darwin/release/bundle"
           V="$APP_VERSION"
           R="$RELEASES_REPO"
           mkdir -p rel
-          cp "$B"/dmg/*.dmg "rel/ezchm_${V}_universal.dmg"
-          cp "$B"/macos/*.app.tar.gz rel/ezchm_universal.app.tar.gz
+          cp "$B"/dmg/*.dmg "rel/ezchm_${V}_aarch64.dmg"
+          cp "$B"/macos/*.app.tar.gz rel/ezchm_aarch64.app.tar.gz
           SIG=$(cat "$B"/macos/*.app.tar.gz.sig)
-          URL="https://github.com/$R/releases/download/v$V/ezchm_universal.app.tar.gz"
+          URL="https://github.com/$R/releases/download/v$V/ezchm_aarch64.app.tar.gz"
           node -e '
             const [v, sig, url] = process.argv.slice(1);
             const p = { signature: sig, url };
-            require("fs").writeFileSync("rel/latest.json", JSON.stringify({ version: v, notes: "", pub_date: new Date().toISOString(), platforms: { "darwin-aarch64": p, "darwin-x86_64": p, "darwin-universal": p } }, null, 2));
+            require("fs").writeFileSync("rel/latest.json", JSON.stringify({ version: v, notes: "", pub_date: new Date().toISOString(), platforms: { "darwin-aarch64": p } }, null, 2));
           ' "$V" "$SIG" "$URL"
           gh release create "v$V" rel/* -R "$R" --target main --title "Ezchm $V" --notes "在 Ezchm 里点「更新」即可；手动安装就把 dmg 里的 Ezchm 拖进「应用程序」覆盖旧版，书架、书签和设置都不受影响。"
 
       - name: 整理产物
         run: |
           mkdir -p out
-          cp src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg "out/ezchm_${APP_VERSION}_universal.dmg"
+          cp src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg "out/ezchm_${APP_VERSION}_aarch64.dmg"
           ls -la out
 
       - uses: actions/upload-artifact@v4

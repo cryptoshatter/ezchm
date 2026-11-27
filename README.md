@@ -11,7 +11,7 @@ Mac 上的 CHM 阅读器，专为阅读 SQL 存储过程和各类代码文档优
 
 ## 安装
 
-1. 到 [ezchm-releases](../../../ezchm-releases/releases/latest) 下载最新的 `ezchm_<版本>_universal.dmg`（Apple 芯片和 Intel 通用）。
+1. 到 [ezchm-releases](../../../ezchm-releases/releases/latest) 下载最新的 `ezchm_<版本>_aarch64.dmg`（仅支持 Apple 芯片）。
 2. 打开 dmg，把 Ezchm 拖进「应用程序」。
 3. 应用没有苹果签名，第一次打开会被系统拦下：
    - 先双击打开一次，看到提示后点「完成」；
@@ -50,7 +50,7 @@ Ezchm 启动后会自动检查新版本，弹窗里点「更新」即可，也�
 
 所有编译都在 GitHub Actions 上完成，本地不需要任何开发工具。
 
-- 推送到 `main` 后，`打包 macOS` 工作流在 `macos-latest` 上打出 universal 包，版本号为 `0.1.<运行序号>`，并发布到 `ezchm-releases`，同时生成 `latest.json` 供应用在线更新。
+- 推送到 `main` 后，`打包 macOS` 工作流在 `macos-latest` 上打出 Apple 芯片（aarch64）安装包，版本号为 `0.1.<运行序号>`，并发布到 `ezchm-releases`，同时生成 `latest.json` 供应用在线更新。
 - 本仓库需要两个 secret：
   - `RELEASES_TOKEN`：能向 `ezchm-releases` 发布、并能写本仓库 secrets 的令牌；
   - `TAURI_SIGNING_PRIVATE_KEY`：更新签名私钥，由 `生成签名密钥` 工作流生成并直接写入，公钥会自动提交到 `src-tauri/tauri.conf.json`。
