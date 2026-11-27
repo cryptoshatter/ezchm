@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { ACTIONS, CONVERT_TARGETS, agentApi, buildPrompt, convertPrompt, nextRunId, onAgent, type AgentInfo, type AgentMsg, type AgentRef } from "../lib/agent";
 import { renderMd } from "../lib/md";
@@ -8,7 +8,7 @@ import { useSettings } from "../settings";
 import { showMenu } from "./ContextMenu";
 import { IconClose, IconPlus } from "./Icons";
 
-export type SelInfo = { text: string; lang: string; lines?: string };
+export type SelInfo = { text: string; lang: string; lines?: string; range?: Range; codeEl?: HTMLElement | null };
 
 export function ensureCodeCss() {
   if (document.getElementById("ez-code-css")) return;
@@ -18,26 +18,64 @@ export function ensureCodeCss() {
   document.head.appendChild(s);
 }
 
-export function selectionInfo(shadow?: ShadowRoot | null): SelInfo | null {
+type ComposedSel = Selection & { getComposedRanges?: (...a: unknown[]) => StaticRange[] };
+
+export function selRange(shadow?: ShadowRoot | null): Range | null {
   const sr = shadow as (ShadowRoot & { getSelection?: () => Selection | null }) | null | undefined;
-  const sel = sr?.getSelection?.() ?? document.getSelection();
+  const own = sr?.getSelection?.();
+  if (own && own.rangeCount && !own.isCollapsed) return own.getRangeAt(0);
+  const sel = document.getSelection() as ComposedSel | null;
   if (!sel || sel.isCollapsed) return null;
-  const text = sel.toString().replace(/ /g, " ");
+  if (shadow && typeof sel.getComposedRanges === "function") {
+    let st: StaticRange | undefined;
+    try {
+      st = sel.getComposedRanges({ shadowRoots: [shadow] })[0];
+    } catch {
+      try {
+        st = sel.getComposedRanges(shadow)[0];
+      } catch {
+        st = undefined;
+      }
+    }
+    if (st && !st.collapsed) {
+      const r = document.createRange();
+      r.setStart(st.startContainer, st.startOffset);
+      r.setEnd(st.endContainer, st.endOffset);
+      return r;
+    }
+  }
+  return sel.rangeCount ? sel.getRangeAt(0) : null;
+}
+
+function rangeText(r: Range) {
+  const f = r.cloneContents();
+  f.querySelectorAll(".ez-ft,.ez-fb,.ez-bar,style").forEach((e) => e.remove());
+  f.querySelectorAll("br").forEach((b) => b.replaceWith("\n"));
+  const blocks = f.querySelectorAll(".line,div,p,li,tr,h1,h2,h3,h4,pre");
+  blocks.forEach((b, i) => i < blocks.length - 1 && b.append("\n"));
+  if (!blocks.length) return f.textContent ?? "";
+  return (f.textContent ?? "").replace(/\n{3,}/g, "\n\n");
+}
+
+export function selectionInfo(shadow?: ShadowRoot | null): SelInfo | null {
+  const r = selRange(shadow);
+  const sel = document.getSelection();
+  let text = r ? rangeText(r) : "";
+  if (!text.trim() && sel) text = sel.toString();
+  text = text.replace(/\u00a0/g, " ");
   if (text.trim().length < 2) return null;
   let lang = "";
   let lines: string | undefined;
-  try {
-    const r = sel.getRangeAt(0);
+  let codeEl: HTMLElement | null = null;
+  if (r) {
     const el = (n: Node) => (n.nodeType === 1 ? (n as Element) : n.parentElement);
     const a = el(r.startContainer)?.closest<HTMLElement>(".line");
     const b = el(r.endContainer)?.closest<HTMLElement>(".line");
-    const code = el(r.commonAncestorContainer)?.closest<HTMLElement>(".ez-code");
-    if (code?.dataset.lang) lang = code.dataset.lang;
+    codeEl = el(r.commonAncestorContainer)?.closest<HTMLElement>(".ez-code") ?? a?.closest<HTMLElement>(".ez-code") ?? null;
+    if (codeEl?.dataset.lang) lang = codeEl.dataset.lang;
     if (a?.dataset.ln && b?.dataset.ln) lines = a.dataset.ln === b.dataset.ln ? `第 ${a.dataset.ln} 行` : `第 ${a.dataset.ln}-${b.dataset.ln} 行`;
-  } catch {
-    /* none */
   }
-  return { text: text.replace(/\s+$/, ""), lang: lang || detectLang(text), lines };
+  return { text: text.replace(/\s+$/, ""), lang: lang || detectLang(text), lines, range: r?.cloneRange(), codeEl };
 }
 
 let refSeq = 1;
@@ -65,11 +103,14 @@ export function useAgent(opts: { source: () => string; fallback: () => SelInfo |
 
   const removeRef = useCallback((id: number) => setRefs((r) => r.filter((x) => x.id !== id)), []);
 
-  const send = useCallback((text: string, opt: { fallback?: boolean; sel?: SelInfo | null } = {}) => {
+  const send = useCallback((text: string, opt: { fallback?: boolean; sel?: SelInfo | null; inline?: boolean } = {}) => {
     const t = text.trim();
     if (!t || st.current.running) return;
     let rs = st.current.refs;
-    if (opt.sel) rs = [...rs.filter((r) => r.text !== opt.sel!.text), { id: refSeq++, text: opt.sel.text, lang: opt.sel.lang, lines: opt.sel.lines, source: o.current.source() }];
+    if (opt.sel) {
+      const sr = { id: refSeq++, text: opt.sel.text, lang: opt.sel.lang, lines: opt.sel.lines, source: o.current.source() };
+      rs = opt.inline ? [sr] : [...rs.filter((r) => r.text !== sr.text), sr];
+    } else if (opt.inline) rs = [];
     if (!rs.length && opt.fallback) {
       const f = o.current.fallback();
       if (f) rs = [{ id: refSeq++, text: f.text, lang: f.lang, lines: f.lines, source: o.current.source() }];
@@ -77,8 +118,10 @@ export function useAgent(opts: { source: () => string; fallback: () => SelInfo |
     const first = !session.current;
     const prompt = buildPrompt(t, rs, first, first ? o.current.source() : "");
     const id = nextRunId();
-    setOpen(true);
-    setRefs([]);
+    if (!opt.inline) {
+      setOpen(true);
+      setRefs([]);
+    }
     setMsgs((m) => [...m, { role: "user", text: t, refs: rs }, { role: "assistant", text: "" }]);
     setRunning(id);
     const patch = (f: (m: AgentMsg) => AgentMsg) =>
@@ -119,16 +162,24 @@ export function useAgent(opts: { source: () => string; fallback: () => SelInfo |
     setRunning(null);
   }, []);
 
-  return { open, setOpen, refs, addRef, removeRef, msgs, running, send, stop, reset, focusTick };
+  const truncate = useCallback((n: number) => {
+    stop();
+    if (n === 0) session.current = null;
+    setMsgs((m) => m.slice(0, n));
+    setRunning(null);
+  }, []);
+
+  return { open, setOpen, refs, addRef, removeRef, msgs, running, send, stop, reset, truncate, focusTick };
 }
 
-function Answer({ msg }: { msg: AgentMsg }) {
+export function Answer({ msg }: { msg: AgentMsg }) {
   const { settings, codeTheme } = useSettings();
   const box = useRef<HTMLDivElement>(null);
   const blocks = useRef<Block[]>([]);
   useLayoutEffect(() => {
     const el = box.current;
     if (!el) return;
+    ensureCodeCss();
     blocks.current.forEach((b) => b.destroy());
     blocks.current = [];
     const codes = renderMd(msg.text, el);
@@ -368,47 +419,333 @@ export function AgentPanel({ agent, onSettings }: { agent: AgentCtl; onSettings:
   );
 }
 
-export function AgentBadge({ at, onClick }: { at: { x: number; y: number } | null; onClick: () => void }) {
-  if (!at) return null;
-  return (
-    <button
-      className="ag-badge"
-      style={{ left: Math.min(at.x, window.innerWidth - 90), top: Math.max(8, at.y) }}
-      onMouseDown={(e) => e.preventDefault()}
-      onClick={onClick}
-    >
-      <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
-        <path d="M8 1.5l1.6 4.1 4.4.3-3.4 2.8 1.1 4.3L8 10.6 4.3 13l1.1-4.3L2 5.9l4.4-.3z" />
-      </svg>
-      Agent
-    </button>
-  );
+
+const ICON_SPARK = (
+  <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor">
+    <path d="M8 .9c.5 3.6 1.6 4.8 5.2 5.3-3.6.4-4.7 1.6-5.2 5.2-.5-3.6-1.6-4.8-5.2-5.2C6.4 5.7 7.5 4.5 8 .9z" />
+    <path d="M12.9 10.4c.2 1.6.7 2.1 2.3 2.3-1.6.2-2.1.7-2.3 2.3-.2-1.6-.7-2.1-2.3-2.3 1.6-.2 2.1-.7 2.3-2.3z" opacity=".7" />
+  </svg>
+);
+
+type Hl = { set: (k: string, v: unknown) => void; delete: (k: string) => void };
+function setAskHighlight(r: Range | null | undefined) {
+  try {
+    const hl = (CSS as unknown as { highlights?: Hl }).highlights;
+    const H = (window as unknown as { Highlight?: new (r: Range) => unknown }).Highlight;
+    if (!hl || !H) return;
+    if (r) hl.set("ez-ask", new H(r));
+    else hl.delete("ez-ask");
+  } catch {
+    /* unsupported */
+  }
 }
 
-export function useSelBadge(getShadow: () => ShadowRoot | null) {
-  const [badge, setBadge] = useState<{ x: number; y: number; info: SelInfo } | null>(null);
+function rectOf(sel: SelInfo, fallback: { x: number; y: number }) {
+  try {
+    const rs = sel.range?.getClientRects();
+    if (rs && rs.length) {
+      const all = Array.from(rs).filter((r) => r.width > 0 || r.height > 0);
+      if (all.length) {
+        const top = Math.min(...all.map((r) => r.top));
+        const bottom = Math.max(...all.map((r) => r.bottom));
+        const first = all.find((r) => r.top === top) ?? all[0];
+        return { left: first.left, top, bottom };
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+  return { left: fallback.x - 20, top: fallback.y - 10, bottom: fallback.y + 10 };
+}
+
+export type SelUI = ReturnType<typeof useSelUI>;
+
+export function useSelUI(getShadow: () => ShadowRoot | null) {
+  const [tb, setTb] = useState<{ sel: SelInfo; mouse: { x: number; y: number } } | null>(null);
+  const [ask, setAsk] = useState<{ sel: SelInfo; mouse: { x: number; y: number }; start: number; auto?: string } | null>(null);
+  const [, setTick] = useState(0);
   const onUp = useCallback((e: MouseEvent) => {
     if (e.button !== 0) return;
+    const mouse = { x: e.clientX, y: e.clientY };
     window.setTimeout(() => {
-      const info = selectionInfo(getShadow());
-      setBadge(info ? { x: e.clientX + 8, y: e.clientY + 14, info } : null);
+      const sel = selectionInfo(getShadow());
+      setTb(sel ? { sel, mouse } : null);
     }, 0);
   }, []);
-  const hide = useCallback(() => setBadge(null), []);
+  const hide = useCallback(() => setTb(null), []);
+  const tbRef = useRef(tb);
+  tbRef.current = tb;
+  const openAsk = useCallback((start: number, auto?: string) => {
+    const t = tbRef.current;
+    if (!t) return;
+    setAsk({ sel: t.sel, mouse: t.mouse, start, auto });
+    setAskHighlight(t.sel.range);
+    setTb(null);
+  }, []);
+  const closeAsk = useCallback(() => {
+    setAsk(null);
+    setAskHighlight(null);
+  }, []);
   useEffect(() => {
-    if (!badge) return;
+    if (!tb && !ask) return;
     const down = (e: MouseEvent) => {
-      if (!(e.target as HTMLElement).closest?.(".ag-badge")) setBadge(null);
+      const t = e.composedPath()[0] as HTMLElement;
+      if (t?.closest?.(".sel-tb,.ask-pop,.ctx")) return;
+      setTb(null);
     };
-    const key = (e: KeyboardEvent) => e.key === "Escape" && setBadge(null);
+    const key = (e: KeyboardEvent) => e.key === "Escape" && setTb(null);
+    const scroll = () => setTick((n) => n + 1);
     window.addEventListener("mousedown", down, true);
     window.addEventListener("keydown", key);
-    window.addEventListener("wheel", hide, { passive: true });
+    window.addEventListener("scroll", scroll, true);
+    window.addEventListener("resize", scroll);
     return () => {
       window.removeEventListener("mousedown", down, true);
       window.removeEventListener("keydown", key);
-      window.removeEventListener("wheel", hide);
+      window.removeEventListener("scroll", scroll, true);
+      window.removeEventListener("resize", scroll);
     };
-  }, [badge]);
-  return { badge, onUp, hide };
+  }, [tb, ask]);
+  useEffect(() => () => setAskHighlight(null), []);
+  return { tb, ask, onUp, hide, openAsk, closeAsk };
+}
+
+export function SelToolbar({ ui, agent }: { ui: SelUI; agent: AgentCtl }) {
+  const t = ui.tb;
+  if (!t || ui.ask) return null;
+  const r = rectOf(t.sel, t.mouse);
+  const above = r.top > 60;
+  const style = { left: Math.max(8, Math.min(r.left, window.innerWidth - 330)), top: above ? r.top - 40 : r.bottom + 8 };
+  const run = (prompt: string) => {
+    const start = agent.msgs.length;
+    agent.send(prompt, { sel: t.sel, inline: true });
+    ui.openAsk(start, prompt);
+  };
+  return (
+    <div className="sel-tb" style={style} onMouseDown={(e) => e.preventDefault()}>
+      <button className="sel-ai" onClick={() => ui.openAsk(agent.msgs.length)} disabled={agent.running != null}>
+        {ICON_SPARK}
+        问 AI
+      </button>
+      <span className="sel-sep" />
+      <button onClick={() => run(ACTIONS[0].prompt)} disabled={agent.running != null}>
+        解释
+      </button>
+      <button onClick={() => run(ACTIONS[2].prompt)} disabled={agent.running != null}>
+        找问题
+      </button>
+      <span className="sel-sep" />
+      <button
+        title="引用到侧栏 ⌘L"
+        onClick={() => {
+          agent.addRef(t.sel);
+          ui.hide();
+        }}
+      >
+        引用
+      </button>
+      <button
+        title="复制"
+        onClick={() => {
+          copyText(t.sel.text);
+          ui.hide();
+        }}
+      >
+        复制
+      </button>
+    </div>
+  );
+}
+
+type Cmd = { id: string; label: string; group: string; prompt?: string; run?: () => void };
+
+function firstCode(md: string) {
+  const m = md.match(/(^|\n)\s*(`{3,}|~{3,})[^\n]*\n([\s\S]*?)\n\s*\2/);
+  return m ? m[3] : null;
+}
+
+export function AskPopover({ ui, agent, onReplace }: { ui: SelUI; agent: AgentCtl; onReplace?: (sel: SelInfo, code: string) => void }) {
+  const a = ui.ask;
+  const [q, setQ] = useState("");
+  const [act, setAct] = useState(0);
+  const input = useRef<HTMLInputElement>(null);
+  const body = useRef<HTMLDivElement>(null);
+  const box = useRef<HTMLDivElement>(null);
+  const [h, setH] = useState(0);
+
+  useEffect(() => {
+    setQ("");
+    setAct(0);
+    window.setTimeout(() => input.current?.focus(), 0);
+  }, [a?.start, a?.sel]);
+
+  const msgs = a ? agent.msgs.slice(a.start) : [];
+  const chat = msgs.length > 0;
+  const last = msgs[msgs.length - 1];
+  const busy = agent.running != null;
+
+  useLayoutEffect(() => {
+    const b = body.current;
+    if (b) b.scrollTop = b.scrollHeight;
+    if (box.current) setH(box.current.offsetHeight);
+  });
+
+  const cmds: Cmd[] = useMemo(
+    () => [
+      ...[ACTIONS[0], ACTIONS[5], ACTIONS[4]].map((x) => ({ id: x.id, label: x.label, prompt: x.prompt, group: "理解" })),
+      ...[ACTIONS[2], ACTIONS[3], ACTIONS[1]].map((x) => ({ id: x.id, label: x.label, prompt: x.prompt, group: "审阅与改写" })),
+      { id: ACTIONS[6].id, label: ACTIONS[6].label, prompt: ACTIONS[6].prompt, group: "生成" },
+      ...CONVERT_TARGETS.map((t) => ({ id: "cv-" + t, label: `转为 ${t}`, prompt: convertPrompt(t), group: "方言转换" })),
+    ],
+    [],
+  );
+  const list = useMemo(() => {
+    const k = q.trim().toLowerCase();
+    const m = k ? cmds.filter((c) => c.label.toLowerCase().includes(k) || c.group.includes(k)) : cmds;
+    return k ? [...m, { id: "free", label: `提问：${q.trim()}`, group: "", prompt: q.trim() }] : m;
+  }, [q, cmds]);
+
+  if (!a) return null;
+
+  const r = rectOf(a.sel, a.mouse);
+  const W = Math.min(520, window.innerWidth - 16);
+  const left = Math.max(8, Math.min(r.left, window.innerWidth - W - 8));
+  const room = window.innerHeight - r.bottom - 12;
+  const top = room >= Math.min(h || 320, 320) ? r.bottom + 8 : Math.max(8, r.top - (h || 320) - 8);
+
+  const send = (prompt: string) => {
+    if (!prompt.trim() || busy) return;
+    if (chat) agent.send(prompt, { inline: true });
+    else agent.send(prompt, { sel: a.sel, inline: true });
+    setQ("");
+    setAct(0);
+  };
+
+  const onKey = (e: React.KeyboardEvent) => {
+    if (e.nativeEvent.isComposing) return;
+    if (e.key === "Escape") {
+      e.preventDefault();
+      if (busy) agent.stop();
+      else ui.closeAsk();
+    } else if (!chat && e.key === "ArrowDown") {
+      e.preventDefault();
+      setAct((i) => Math.min(list.length - 1, i + 1));
+    } else if (!chat && e.key === "ArrowUp") {
+      e.preventDefault();
+      setAct((i) => Math.max(0, i - 1));
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      if (!chat && list[act]?.prompt) send(list[act].prompt!);
+      else send(q);
+    }
+  };
+
+  const code = last?.done && last.role === "assistant" ? firstCode(last.text) : null;
+  let group = "";
+
+  return (
+    <div className="ask-pop" ref={box} style={{ left, top, width: W }}>
+      {chat && (
+        <div className="ask-body" ref={body}>
+          {msgs.map((m, i) =>
+            m.role === "user" ? (
+              <div key={i} className="ask-q">
+                {cmds.find((c) => c.prompt === m.text)?.label ?? m.text}
+              </div>
+            ) : (
+              <div key={i} className="ask-a">
+                {m.text ? <Answer msg={m} /> : !m.error && <div className="ag-wait"><span /><span /><span /></div>}
+                {m.error && <div className="ag-error">{m.error}</div>}
+              </div>
+            ),
+          )}
+        </div>
+      )}
+      <div className="ask-in">
+        <span className="ask-spark">{ICON_SPARK}</span>
+        <input
+          ref={input}
+          value={q}
+          placeholder={busy ? "生成中… Esc 停止" : chat ? "继续追问" : "让 AI 做什么"}
+          onChange={(e) => {
+            setQ(e.target.value);
+            setAct(0);
+          }}
+          onKeyDown={onKey}
+          spellCheck={false}
+        />
+        {busy ? (
+          <button className="ag-send stop" title="停止" onClick={agent.stop}>
+            <span />
+          </button>
+        ) : (
+          <button className="ag-send" disabled={!q.trim()} onClick={() => send(q)}>
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M8 13V3M3.5 7.5 8 3l4.5 4.5" />
+            </svg>
+          </button>
+        )}
+      </div>
+      {chat && !busy && last?.done && (
+        <div className="ask-ops">
+          {code && onReplace && (
+            <button
+              className="primary"
+              onClick={() => {
+                onReplace(a.sel, code);
+                ui.closeAsk();
+              }}
+            >
+              替换选中内容
+            </button>
+          )}
+          {code && <button onClick={() => copyText(code)}>复制代码</button>}
+          <button onClick={() => copyText(last.text)}>复制回答</button>
+          <button
+            onClick={() => {
+              agent.setOpen(true);
+              ui.closeAsk();
+            }}
+          >
+            转到侧栏
+          </button>
+          <button
+            className="danger"
+            onClick={() => {
+              agent.truncate(a.start);
+              ui.closeAsk();
+            }}
+          >
+            丢弃
+          </button>
+        </div>
+      )}
+      {!chat && (
+        <div className="ask-menu">
+          {list.map((c, i) => {
+            const head = c.group && c.group !== group ? c.group : null;
+            group = c.group;
+            return (
+              <div key={c.id}>
+                {head && <div className="ask-group">{head}</div>}
+                <button className={`ask-item ${i === act ? "on" : ""}`} onMouseEnter={() => setAct(i)} onClick={() => c.prompt && send(c.prompt)}>
+                  {c.label}
+                </button>
+              </div>
+            );
+          })}
+          <div className="ask-group">其他</div>
+          <button
+            className="ask-item"
+            onClick={() => {
+              agent.addRef(a.sel);
+              ui.closeAsk();
+            }}
+          >
+            引用到侧栏
+          </button>
+        </div>
+      )}
+    </div>
+  );
 }

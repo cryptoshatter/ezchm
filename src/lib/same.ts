@@ -146,5 +146,6 @@ mark.ez-same.w{background:color-mix(in srgb,var(--write) 17%,transparent);box-sh
 mark.ez-same.cur{background:color-mix(in srgb,var(--accent) 28%,transparent);box-shadow:inset 0 0 0 1.5px color-mix(in srgb,var(--accent) 70%,transparent)}
 mark.ez-same.w.cur{background:color-mix(in srgb,var(--write) 30%,transparent);box-shadow:inset 0 0 0 1.5px color-mix(in srgb,var(--write) 75%,transparent)}
 mark.ez-hit{color:inherit;background:color-mix(in srgb,var(--hit-base) 24%,transparent);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--hit-base) 45%,transparent);border-radius:3px;padding:0 1px;margin:0 -1px}
+::highlight(ez-ask){background-color:color-mix(in srgb,var(--accent) 22%,transparent)}
 mark.ez-hit.cur{background:color-mix(in srgb,var(--hit-base) 45%,transparent);box-shadow:inset 0 0 0 1.5px var(--hit-base)}
 `;

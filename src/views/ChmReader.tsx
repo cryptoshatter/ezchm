@@ -5,7 +5,7 @@ import { BookmarkList, IndexList, SearchPanel, TocTree } from "../components/Pan
 import PageView, { type PageHandle } from "../components/PageView";
 import { IconAgent, IconBack, IconBookmarks, IconForward, IconFormat, IconHome, IconIndex, IconSearch, IconStar, IconToc } from "../components/Icons";
 import { copyText, toast } from "../lib/codeblock";
-import { AgentBadge, AgentPanel, selectionInfo, useAgent, useSelBadge } from "../components/agent";
+import { AskPopover, SelToolbar, AgentPanel, selectionInfo, useAgent, useSelUI } from "../components/agent";
 import { showMenu } from "../components/ContextMenu";
 import { ACTIONS } from "../lib/agent";
 import { useKeys } from "../keys";
@@ -97,19 +97,19 @@ export default function ChmReader({ path, initialPage, active = true, onTitle, o
     source: () => [book?.title, loadedRef.current.title].filter(Boolean).join(" / "),
     fallback: () => page.current?.fallback() ?? null,
   });
-  const badge = useSelBadge(shadowOf);
+  const ui = useSelUI(shadowOf);
   const quoteSel = () => {
     const s = selectionInfo(shadowOf());
     if (s) agent.addRef(s);
     else agent.setOpen(!agent.open);
-    badge.hide();
+    ui.hide();
   };
 
   const onCtx = useCallback(
     (e: MouseEvent) => {
       const sel = selectionInfo(shadowOf());
       const word = page.current?.identAt(e.clientX, e.clientY, e.composedPath()[0] as Element) ?? null;
-      badge.hide();
+      ui.hide();
       showMenu(e, [
         sel && { label: "复制", shortcut: "⌘C", action: () => copyText(sel.text) },
         sel && { label: "引用到 Agent", shortcut: "⌘L", action: () => agent.addRef(sel) },
@@ -243,16 +243,11 @@ export default function ChmReader({ path, initialPage, active = true, onTitle, o
               onNavigate={(p) => go(p)}
               onLoaded={onLoaded}
               onScroll={onScroll}
-              onSelUp={badge.onUp}
+              onSelUp={ui.onUp}
               onCtx={onCtx}
             />
-            <AgentBadge
-              at={badge.badge}
-              onClick={() => {
-                if (badge.badge) agent.addRef(badge.badge.info);
-                badge.hide();
-              }}
-            />
+            <SelToolbar ui={ui} agent={agent} />
+            <AskPopover ui={ui} agent={agent} onReplace={(sel, code) => page.current?.replaceSel(sel, code)} />
           </>
         )}
       </Layout>

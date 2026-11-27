@@ -1,7 +1,8 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { api, errText } from "../api";
-import { CODE_CSS, hashText, mountCodeBlock, normalizeCode, type Block } from "../lib/codeblock";
+import { CODE_CSS, hashText, mountCodeBlock, normalizeCode, toast, type Block } from "../lib/codeblock";
+import { spliceText } from "../lib/agent";
 import { PAGE_CSS, buildPage, findCodeBlocks, isExternal, markTerms, resolvePath } from "../lib/page";
 import { useSettings } from "../settings";
 import { useFinder, type Finder } from "./finder";
@@ -17,6 +18,7 @@ export type PageHandle = Finder & {
   fallback: () => SelInfo | null;
   identAt: (x: number, y: number, target?: Element | null) => string | null;
   highlight: (word: string) => void;
+  replaceSel: (sel: SelInfo, code: string) => void;
 };
 
 type Props = {
@@ -202,6 +204,16 @@ const PageView = forwardRef<PageHandle, Props>(function PageView({ bookId, item,
         return w && isIdent(w) ? w : null;
       },
       highlight: (w) => same.apply(w),
+      replaceSel: (sel, code) => {
+        const b = blocks.current.find((x) => sel.codeEl && (x.el === sel.codeEl || x.el.contains(sel.codeEl)));
+        if (!b) {
+          toast("只能替换代码块里的内容");
+          return;
+        }
+        const next = spliceText(b.text(), sel.text, code);
+        if (next == null) toast("原文已变化，无法定位选中内容");
+        else b.editWith(next);
+      },
     }),
     [finder],
   );

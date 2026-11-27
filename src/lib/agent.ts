@@ -67,3 +67,15 @@ export function buildPrompt(text: string, refs: AgentRef[], first: boolean, cont
   parts.push(text);
   return parts.join("\n\n");
 }
+
+export function spliceText(full: string, sel: string, repl: string): string | null {
+  const r = repl.replace(/\s+$/, "");
+  let i = full.indexOf(sel);
+  if (i >= 0) return full.slice(0, i) + r + full.slice(i + sel.length);
+  const norm = (t: string) => t.replace(/\u00a0/g, " ").replace(/[ \t]+$/gm, "");
+  const f = norm(full);
+  const s = norm(sel).replace(/\s+$/, "");
+  i = f.indexOf(s);
+  if (i >= 0) return f.slice(0, i) + r + f.slice(i + s.length);
+  return null;
+}

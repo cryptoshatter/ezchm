@@ -36,6 +36,7 @@ export type Block = {
   isSql: () => boolean;
   formatted: () => boolean;
   edit: () => void;
+  editWith: (text: string) => void;
   destroy: () => void;
 };
 
@@ -285,8 +286,8 @@ export function mountCodeBlock(host: HTMLElement, source: string, opts: BlockOpt
     render();
   };
 
-  const startEdit = async () => {
-    if (o.onEdit) {
+  const startEdit = async (initial?: string) => {
+    if (o.onEdit && initial == null) {
       o.onEdit();
       return;
     }
@@ -329,7 +330,7 @@ export function mountCodeBlock(host: HTMLElement, source: string, opts: BlockOpt
       finish();
     };
     const ed = createEditor(host, {
-      text: current(),
+      text: initial ?? current(),
       lang,
       dialect,
       dark: document.documentElement.dataset.theme === "dark",
@@ -361,7 +362,7 @@ export function mountCodeBlock(host: HTMLElement, source: string, opts: BlockOpt
     };
     ed.focus();
   };
-  bEdit.onclick = startEdit;
+  bEdit.onclick = () => startEdit();
 
   if (lang === "sql" && o.settings.autoFormat && code.split("\n").length > 0) {
     if (doFormat()) showFormatted = true;
@@ -392,7 +393,8 @@ export function mountCodeBlock(host: HTMLElement, source: string, opts: BlockOpt
     toggleFormat,
     isSql: () => lang === "sql",
     formatted: () => showFormatted,
-    edit: startEdit,
+    edit: () => startEdit(),
+    editWith: (t: string) => startEdit(t),
     destroy() {
       seq++;
       editing?.destroy();

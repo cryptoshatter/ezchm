@@ -7,7 +7,8 @@ import { FindBar, Layout, Tabs, TopBar } from "../components/Shell";
 import { BookmarkList, FileTree } from "../components/Panels";
 import { IconAgent, IconBookmarks, IconEdit, IconFiles, IconFormat, IconHome, IconStar } from "../components/Icons";
 import { copyText, mountCodeBlock, toast, type Block } from "../lib/codeblock";
-import { AgentBadge, AgentPanel, ensureCodeCss, selectionInfo, useAgent, useSelBadge } from "../components/agent";
+import { spliceText } from "../lib/agent";
+import { AskPopover, SelToolbar, type SelInfo, AgentPanel, ensureCodeCss, selectionInfo, useAgent, useSelUI } from "../components/agent";
 import { showMenu } from "../components/ContextMenu";
 import { ACTIONS } from "../lib/agent";
 import { isIdent, wordAtPoint } from "../lib/same";
@@ -61,12 +62,12 @@ export default function CodeReader({ path, kind, onHome, onSettings, active = tr
     source: () => (dataRef.current ? (kind === "folder" ? `${baseName(path)} / ${dataRef.current.name}` : dataRef.current.name) : baseName(path)),
     fallback: () => (dataRef.current ? { text: block.current?.text() ?? dataRef.current.text, lang: langFromName(dataRef.current.name) ?? "text" } : null),
   });
-  const badge = useSelBadge(() => null);
+  const ui = useSelUI(() => null);
   const quoteSel = () => {
     const s = selectionInfo();
     if (s) agent.addRef(s);
     else agent.setOpen(!agent.open);
-    badge.hide();
+    ui.hide();
   };
 
   useEffect(() => {
@@ -151,7 +152,10 @@ export default function CodeReader({ path, kind, onHome, onSettings, active = tr
       editor.current = null;
       return;
     }
-    editor.current = mountEditor(data.text);
+    const pt = pendingText.current;
+    pendingText.current = null;
+    editor.current = mountEditor(pt ?? data.text);
+    if (pt != null) setDirty(true);
     editor.current.focus();
     return () => {
       editor.current?.destroy();
@@ -276,11 +280,27 @@ export default function CodeReader({ path, kind, onHome, onSettings, active = tr
     active,
   );
 
+  const pendingText = useRef<string | null>(null);
+  const replaceSel = (sel: SelInfo, code: string) => {
+    const cur = block.current?.text() ?? data?.text ?? "";
+    const next = spliceText(cur, sel.text, code);
+    if (next == null) {
+      toast("原文已变化，无法定位选中内容");
+      return;
+    }
+    pendingText.current = next;
+    if (editing) {
+      editor.current?.destroy();
+      editor.current = mountEditor(next);
+      setDirty(true);
+    } else setEditing(true);
+  };
+
   const onCtx = (e: React.MouseEvent) => {
     const sel = selectionInfo();
     const w = wordAtPoint(e.clientX, e.clientY, null, e.target as Element);
     const word = w && isIdent(w) ? w : null;
-    badge.hide();
+    ui.hide();
     showMenu(e, [
       sel && { label: "复制", shortcut: "⌘C", action: () => copyText(sel.text) },
       sel && { label: "引用到 Agent", shortcut: "⌘L", action: () => agent.addRef(sel) },
@@ -380,7 +400,7 @@ export default function CodeReader({ path, kind, onHome, onSettings, active = tr
           className="page-scroll code-scroll"
           ref={scroller}
           style={{ display: editing ? "none" : undefined }}
-          onMouseUp={(e) => badge.onUp(e.nativeEvent)}
+          onMouseUp={(e) => ui.onUp(e.nativeEvent)}
           onContextMenu={onCtx}
         >
           {error && <div className="center-msg">{error}</div>}
@@ -398,13 +418,10 @@ export default function CodeReader({ path, kind, onHome, onSettings, active = tr
           />
         )}
         {!editing && (
-          <AgentBadge
-            at={badge.badge}
-            onClick={() => {
-              if (badge.badge) agent.addRef(badge.badge.info);
-              badge.hide();
-            }}
-          />
+          <>
+            <SelToolbar ui={ui} agent={agent} />
+            <AskPopover ui={ui} agent={agent} onReplace={replaceSel} />
+          </>
         )}
         <div className="edit-host" ref={editHost} style={{ display: editing ? undefined : "none" }} />
       </Layout>
