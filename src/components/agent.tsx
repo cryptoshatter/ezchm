@@ -469,6 +469,10 @@ export function useSelUI(getShadow: () => ShadowRoot | null) {
     const mouse = { x: e.clientX, y: e.clientY };
     window.setTimeout(() => {
       const sel = selectionInfo(getShadow());
+      if (sel) {
+        setAsk(null);
+        setAskHighlight(null);
+      }
       setTb(sel ? { sel, mouse } : null);
     }, 0);
   }, []);
@@ -492,8 +496,15 @@ export function useSelUI(getShadow: () => ShadowRoot | null) {
       const t = e.composedPath()[0] as HTMLElement;
       if (t?.closest?.(".sel-tb,.ask-pop,.ctx")) return;
       setTb(null);
+      setAsk(null);
+      setAskHighlight(null);
     };
-    const key = (e: KeyboardEvent) => e.key === "Escape" && setTb(null);
+    const key = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || e.defaultPrevented) return;
+      setTb(null);
+      setAsk(null);
+      setAskHighlight(null);
+    };
     const scroll = () => setTick((n) => n + 1);
     window.addEventListener("mousedown", down, true);
     window.addEventListener("keydown", key);
