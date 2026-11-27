@@ -54,6 +54,12 @@ function Select<T extends string>({ value, options, onChange }: { value: T; opti
   );
 }
 
+function PathInput({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const [v, setV] = useState(value);
+  useEffect(() => setV(value), [value]);
+  return <input className="text-in" value={v} placeholder="自动查找" spellCheck={false} onChange={(e) => setV(e.target.value)} onBlur={() => v !== value && onChange(v.trim())} onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()} />;
+}
+
 const FONTS = ["JetBrains Mono", "SF Mono", "Menlo", "Monaco", "Courier New"].map((f) => ({ id: f, name: f }));
 
 export default function SettingsDialog({ onClose }: { onClose: () => void }) {
@@ -113,6 +119,9 @@ export default function SettingsDialog({ onClose }: { onClose: () => void }) {
           <Row label="自动换行">
             <Switch value={s.wrap} onChange={S("wrap")} />
           </Row>
+          <Row label="自动折叠注释头和声明区">
+            <Switch value={s.autoFold} onChange={S("autoFold")} />
+          </Row>
 
           <h4>SQL</h4>
           <Row label="方言">
@@ -128,6 +137,11 @@ export default function SettingsDialog({ onClose }: { onClose: () => void }) {
           </Row>
           <Row label="打开时自动格式化">
             <Switch value={s.autoFormat} onChange={S("autoFormat")} />
+          </Row>
+
+          <h4>Agent</h4>
+          <Row label="Claude Code 路径">
+            <PathInput value={s.agentPath} onChange={S("agentPath")} />
           </Row>
 
           <h4>关于</h4>

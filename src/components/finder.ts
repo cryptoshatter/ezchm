@@ -28,6 +28,8 @@ export function useFinder(getRoot: () => HTMLElement | null): Finder {
       m[idx.current]?.classList.remove("cur");
       idx.current = n;
       m[n].classList.add("cur");
+      const hidden = m[n].closest(".line.ez-hidden");
+      if (hidden) hidden.dispatchEvent(new CustomEvent("ez-reveal", { bubbles: true }));
       m[n].scrollIntoView({ block: "center" });
       return { count: m.length, index: n };
     };

@@ -2,10 +2,12 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { IconClose, IconMoon, IconSettings, IconSidebar, IconSun } from "./Icons";
 import { useSettings } from "../settings";
 import type { FindState } from "./finder";
+import { TabStrip } from "../tabs";
 
 export function TopBar({ left, center, right, onSettings }: { left?: ReactNode; center?: ReactNode; right?: ReactNode; onSettings: () => void }) {
   const { settings, set, dark } = useSettings();
   return (
+    <>
     <div className="topbar" data-tauri-drag-region>
       <div className="tb-left">
         <button className="icon-btn" title="侧栏 ⌘\" onClick={() => set("sidebarOpen", !settings.sidebarOpen)}>
@@ -26,10 +28,42 @@ export function TopBar({ left, center, right, onSettings }: { left?: ReactNode; 
         </button>
       </div>
     </div>
+    <TabStrip />
+    </>
   );
 }
 
-export function Layout({ sidebar, children }: { sidebar: ReactNode; children: ReactNode }) {
+function AsideBox({ children }: { children: ReactNode }) {
+  const { settings, set } = useSettings();
+  const [width, setWidth] = useState(settings.agentWidth);
+  useEffect(() => setWidth(settings.agentWidth), [settings.agentWidth]);
+  const onDown = (e: React.MouseEvent) => {
+    const x0 = e.clientX;
+    const w0 = width;
+    let last = w0;
+    const move = (ev: MouseEvent) => {
+      last = Math.min(Math.max(300, window.innerWidth - 360), Math.max(300, w0 - (ev.clientX - x0)));
+      setWidth(last);
+    };
+    const up = () => {
+      window.removeEventListener("mousemove", move);
+      window.removeEventListener("mouseup", up);
+      document.body.classList.remove("resizing");
+      set("agentWidth", last);
+    };
+    document.body.classList.add("resizing");
+    window.addEventListener("mousemove", move);
+    window.addEventListener("mouseup", up);
+  };
+  return (
+    <aside className="aside" style={{ width }}>
+      <div className="resizer left" onMouseDown={onDown} />
+      {children}
+    </aside>
+  );
+}
+
+export function Layout({ sidebar, children, aside }: { sidebar: ReactNode; children: ReactNode; aside?: ReactNode }) {
   const { settings, set } = useSettings();
   const [width, setWidth] = useState(settings.sidebarWidth);
   const drag = useRef<{ x: number; w: number } | null>(null);
@@ -65,6 +99,7 @@ export function Layout({ sidebar, children }: { sidebar: ReactNode; children: Re
         </aside>
       )}
       <main className="main">{children}</main>
+      {aside && <AsideBox>{aside}</AsideBox>}
     </div>
   );
 }

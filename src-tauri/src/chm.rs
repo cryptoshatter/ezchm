@@ -189,16 +189,23 @@ impl Book {
             }
         }
         if self.toc.is_empty() {
-            let mut pages: Vec<&String> = self.files.iter().filter(|f| is_html(f)).collect();
-            pages.sort();
-            self.toc = pages
-                .into_iter()
-                .map(|p| TocNode {
-                    name: p.trim_start_matches('/').to_string(),
-                    local: Some(p.clone()),
-                    children: vec![],
-                })
+            let pages: Vec<(String, String)> = self
+                .files
+                .iter()
+                .filter(|f| is_html(f))
+                .map(|p| (p.trim_start_matches('/').to_string(), p.clone()))
                 .collect();
+            self.toc = path_tree(pages);
+        } else if self.toc.len() > 1
+            && self.toc.iter().all(|n| n.children.is_empty())
+            && self.toc.iter().filter(|n| n.name.contains('/')).count() * 2 > self.toc.len()
+        {
+            let pages = self
+                .toc
+                .iter()
+                .map(|n| (n.name.trim_start_matches('/').to_string(), n.local.clone().unwrap_or_default()))
+                .collect();
+            self.toc = path_tree(pages);
         }
         self.home = home
             .map(dec)
@@ -350,6 +357,96 @@ pub fn flatten_titles(nodes: &[TocNode], out: &mut HashMap<String, String>) {
         }
         flatten_titles(&n.children, out);
     }
+}
+
+fn leaf_name(seg: &str) -> String {
+    let l = seg.to_ascii_lowercase();
+    for ext in [".html", ".htm", ".xhtml", ".shtml"] {
+        if l.ends_with(ext) {
+            return seg[..seg.len() - ext.len()].to_string();
+        }
+    }
+    seg.to_string()
+}
+
+fn natural_cmp(a: &str, b: &str) -> std::cmp::Ordering {
+    let (mut x, mut y) = (a.chars().peekable(), b.chars().peekable());
+    loop {
+        match (x.peek().copied(), y.peek().copied()) {
+            (None, None) => return std::cmp::Ordering::Equal,
+            (None, _) => return std::cmp::Ordering::Less,
+            (_, None) => return std::cmp::Ordering::Greater,
+            (Some(c), Some(d)) if c.is_ascii_digit() && d.is_ascii_digit() => {
+                let mut n1 = String::new();
+                while let Some(c) = x.peek().copied().filter(|c| c.is_ascii_digit()) {
+                    n1.push(c);
+                    x.next();
+                }
+                let mut n2 = String::new();
+                while let Some(c) = y.peek().copied().filter(|c| c.is_ascii_digit()) {
+                    n2.push(c);
+                    y.next();
+                }
+                let (t1, t2) = (n1.trim_start_matches('0'), n2.trim_start_matches('0'));
+                let o = t1.len().cmp(&t2.len()).then_with(|| t1.cmp(t2));
+                if o != std::cmp::Ordering::Equal {
+                    return o;
+                }
+            }
+            (Some(c), Some(d)) => {
+                let o = c.to_lowercase().cmp(d.to_lowercase());
+                if o != std::cmp::Ordering::Equal {
+                    return o;
+                }
+                x.next();
+                y.next();
+            }
+        }
+    }
+}
+
+pub fn path_tree(pages: Vec<(String, String)>) -> Vec<TocNode> {
+    #[derive(Default)]
+    struct Dir {
+        dirs: Vec<(String, Dir)>,
+        files: Vec<TocNode>,
+    }
+    let mut root = Dir::default();
+    for (name, local) in pages {
+        let segs: Vec<&str> = name.split('/').filter(|s| !s.is_empty()).collect();
+        if segs.is_empty() {
+            continue;
+        }
+        let mut cur = &mut root;
+        for seg in &segs[..segs.len() - 1] {
+            let i = match cur.dirs.iter().position(|(n, _)| n == seg) {
+                Some(i) => i,
+                None => {
+                    cur.dirs.push((seg.to_string(), Dir::default()));
+                    cur.dirs.len() - 1
+                }
+            };
+            cur = &mut cur.dirs[i].1;
+        }
+        cur.files.push(TocNode {
+            name: leaf_name(segs[segs.len() - 1]),
+            local: Some(local),
+            children: vec![],
+        });
+    }
+    fn build(d: Dir) -> Vec<TocNode> {
+        let mut dirs = d.dirs;
+        dirs.sort_by(|a, b| natural_cmp(&a.0, &b.0));
+        let mut files = d.files;
+        files.sort_by(|a, b| natural_cmp(&a.name, &b.name));
+        let mut out: Vec<TocNode> = dirs
+            .into_iter()
+            .map(|(name, sub)| TocNode { name, local: None, children: build(sub) })
+            .collect();
+        out.extend(files);
+        out
+    }
+    build(root)
 }
 
 fn first_local(nodes: &[TocNode]) -> Option<String> {
@@ -535,6 +632,19 @@ mod tests {
         assert_eq!(t[0].children[0].name, "1.1 & 小节");
         assert_eq!(t[0].children[0].local.as_deref(), Some("/ch1/s1.htm#a"));
         assert_eq!(t[1].local.as_deref(), Some("/ch2.htm"));
+        let tree = path_tree(vec![
+            ("db (x)/schemas/A/procedures/P10.html".into(), "/db (x)/schemas/A/procedures/P10.html".into()),
+            ("db (x)/schemas/A/procedures/P9.html".into(), "/db (x)/schemas/A/procedures/P9.html".into()),
+            ("db (x)/schemas/A/tables/T1.html".into(), "/db (x)/schemas/A/tables/T1.html".into()),
+            ("index.html".into(), "/index.html".into()),
+        ]);
+        assert_eq!(tree.len(), 2);
+        assert_eq!(tree[0].name, "db (x)");
+        let procs = &tree[0].children[0].children[0].children[0];
+        assert_eq!(procs.name, "procedures");
+        assert_eq!(procs.children[0].name, "P9");
+        assert_eq!(procs.children[1].name, "P10");
+        assert_eq!(tree[1].name, "index");
         let idx = parse_index(src);
         assert_eq!(idx.len(), 3);
         assert_eq!(idx[1].depth, 1);

@@ -227,6 +227,4 @@ export const PAGE_CSS = `
 .ez-page blockquote{margin:1em 0;padding:.2em 1em;border-left:3px solid var(--line);color:var(--muted)}
 .ez-page ul,.ez-page ol{padding-left:1.6em}
 .ez-page dt{font-weight:600}
-mark.ez-hit{background:var(--hit);color:inherit;border-radius:2px}
-mark.ez-hit.cur{background:var(--hit-cur)}
 `;

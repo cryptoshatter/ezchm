@@ -19,8 +19,61 @@ function findTrail(nodes: TocNode[], target: string, prefix: string, out: string
   return false;
 }
 
-export function TocTree({ nodes, current, onOpen }: { nodes: TocNode[]; current: string; onOpen: (p: string) => void }) {
-  const [open, setOpen] = useState<Set<string>>(() => new Set(nodes.length === 1 ? ["0"] : []));
+type Flat = { name: string; local: string; trail: string };
+
+function flatten(nodes: TocNode[], trail: string[], out: Flat[]) {
+  for (const n of nodes) {
+    if (n.local) out.push({ name: n.name, local: n.local, trail: trail.join(" › ") });
+    if (n.children.length) flatten(n.children, [...trail, n.name], out);
+  }
+  return out;
+}
+
+export function TocTree({ nodes, current, onOpen, onMenu }: { nodes: TocNode[]; current: string; onOpen: (p: string) => void; onMenu?: (e: React.MouseEvent, n: { name: string; local: string | null }) => void }) {
+  const [q, setQ] = useState("");
+  const flat = useMemo(() => flatten(nodes, [], []), [nodes]);
+  const matches = useMemo(() => {
+    const s = q.trim().toLowerCase();
+    if (!s) return null;
+    const parts = s.split(/\s+/);
+    return flat.filter((f) => parts.every((p) => f.name.toLowerCase().includes(p) || f.trail.toLowerCase().includes(p))).slice(0, 800);
+  }, [q, flat]);
+  return (
+    <div className="side-col">
+      <div className="side-search">
+        <input value={q} placeholder="筛选目录" onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === "Escape" && setQ("")} />
+      </div>
+      {matches ? (
+        <div className="side-scroll">
+          {matches.map((m, i) => (
+            <div key={i} className={`tree-row flat ${bare(m.local) === bare(current) ? "active" : ""}`} onClick={() => onOpen(m.local)} onContextMenu={(e) => onMenu?.(e, m)}>
+              <span className="tree-label">
+                {m.name}
+                {m.trail && <span className="tree-trail">{m.trail}</span>}
+              </span>
+            </div>
+          ))}
+          {!matches.length && <div className="side-empty">无匹配</div>}
+        </div>
+      ) : (
+        <Tree nodes={nodes} current={current} onOpen={onOpen} onMenu={onMenu} />
+      )}
+    </div>
+  );
+}
+
+function Tree({ nodes, current, onOpen, onMenu }: { nodes: TocNode[]; current: string; onOpen: (p: string) => void; onMenu?: (e: React.MouseEvent, n: { name: string; local: string | null }) => void }) {
+  const [open, setOpen] = useState<Set<string>>(() => {
+    const init = new Set<string>();
+    let list = nodes;
+    let key = "";
+    while (list.length === 1 && list[0].children.length) {
+      key = key ? `${key}.0` : "0";
+      init.add(key);
+      list = list[0].children;
+    }
+    return init;
+  });
   const [active, setActive] = useState<string | null>(null);
   const box = useRef<HTMLDivElement>(null);
 
@@ -63,6 +116,7 @@ export function TocTree({ nodes, current, onOpen }: { nodes: TocNode[]; current:
           <div
             className={`tree-row ${active === key ? "active" : ""}`}
             style={{ paddingLeft: 8 + depth * 14 }}
+            onContextMenu={(e) => onMenu?.(e, n)}
             onClick={() => {
               if (n.local) onOpen(n.local);
               if (has && (!n.local || !isOpen)) toggle(key);

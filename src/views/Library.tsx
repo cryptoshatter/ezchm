@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import { getCurrentWindow } from "@tauri-apps/api/window";
 import { api, type Item } from "../api";
 import { TopBar } from "../components/Shell";
 import { IconBook, IconClose, IconFile, IconFolder } from "../components/Icons";
@@ -21,8 +20,10 @@ export default function Library({
   onOpenFile,
   onOpenFolder,
   onSettings,
+  active = true,
 }: {
-  onOpen: (path: string) => void;
+  active?: boolean;
+  onOpen: (path: string, newTab?: boolean) => void;
   onOpenChm: () => void;
   onOpenFile: () => void;
   onOpenFolder: () => void;
@@ -31,9 +32,8 @@ export default function Library({
   const [items, setItems] = useState<Item[] | null>(null);
 
   useEffect(() => {
-    api.items().then(setItems).catch(() => setItems([]));
-    getCurrentWindow().setTitle("Ezchm").catch(() => undefined);
-  }, []);
+    if (active) api.items().then(setItems).catch(() => setItems([]));
+  }, [active]);
 
   const books = items?.filter((i) => i.kind === "chm") ?? [];
   const code = items?.filter((i) => i.kind !== "chm") ?? [];
@@ -44,7 +44,7 @@ export default function Library({
   };
 
   const Row = ({ it }: { it: Item }) => (
-    <div className="lib-item" onClick={() => onOpen(it.path)} title={it.path}>
+    <div className="lib-item" onClick={(e) => onOpen(it.path, e.metaKey)} onAuxClick={(e) => e.button === 1 && onOpen(it.path, true)} title={it.path}>
       <div className={`lib-icon k-${it.kind}`}>{it.kind === "chm" ? <IconBook /> : it.kind === "folder" ? <IconFolder /> : <IconFile />}</div>
       <div className="lib-main">
         <div className="lib-title">{it.title}</div>

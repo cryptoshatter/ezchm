@@ -17,11 +17,14 @@ export function keyName(e: KeyboardEvent) {
   return parts.join("+");
 }
 
-export function useKeys(map: Record<string, () => void>) {
+export function useKeys(map: Record<string, () => unknown>, enabled = true) {
   const ref = useRef(map);
   ref.current = map;
+  const on_ = useRef(enabled);
+  on_.current = enabled;
   useEffect(() => {
     const on = (e: KeyboardEvent) => {
+      if (!on_.current || e.defaultPrevented) return;
       const fn = ref.current[keyName(e)];
       if (fn) {
         e.preventDefault();

@@ -1,7 +1,7 @@
 import { format } from "sql-formatter";
 import type { Dialect } from "./detect";
 
-type Tok = { t: "w" | "id" | "s" | "n" | "op" | "c" | "lc" | "p" | "var"; v: string; nl?: boolean };
+export type Tok = { t: "w" | "id" | "s" | "n" | "op" | "c" | "lc" | "p" | "var"; v: string; nl?: boolean; ln?: number; el?: number };
 
 const WORD = /[A-Za-z_\u0080-￿#$]/;
 const WORDC = /[A-Za-z0-9_\u0080-￿#$]/;
@@ -11,14 +11,18 @@ export function tokenize(src: string): Tok[] {
   let i = 0;
   const n = src.length;
   let sawNl = false;
+  let line = 0;
   const push = (t: Tok["t"], v: string) => {
-    out.push({ t, v, nl: sawNl });
+    const ln = line;
+    for (let k = 0; k < v.length; k++) if (v.charCodeAt(k) === 10) line++;
+    out.push({ t, v, nl: sawNl, ln, el: line });
     sawNl = false;
   };
   while (i < n) {
     const c = src[i];
     if (c === "\n") {
       sawNl = true;
+      line++;
       i++;
       continue;
     }
@@ -723,3 +727,5 @@ function runFormatterCond(cond: Tok[], dialect: Dialect, upper: boolean) {
     return `${head} ${rest}`;
   }
 }
+
+export const SQL_KEYWORDS = KW;

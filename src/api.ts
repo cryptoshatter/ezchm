@@ -9,6 +9,7 @@ export type Item = { path: string; kind: "chm" | "file" | "folder"; title: strin
 export type Bookmark = { id: number; item: string; page: string; title: string; scroll: number; created_at: string };
 export type TextFile = { path: string; name: string; text: string; encoding: string; size: number };
 export type DirEntry = { name: string; path: string; dir: boolean };
+export type CodeEdit = { idx: number; hash: string; text: string; updated_at: string };
 export type AppInfo = { version: string; data_dir: string };
 
 export const api = {
@@ -30,6 +31,9 @@ export const api = {
   chmSearch: (id: string, query: string) => invoke<SearchHit[]>("chm_search", { id, query }),
   chmClose: (id: string) => invoke<void>("chm_close", { id }),
   fileRead: (path: string) => invoke<TextFile>("file_read", { path }),
+  fileWrite: (path: string, text: string, encoding: string) => invoke<void>("file_write", { path, text, encoding }),
+  edits: (item: string, page: string) => invoke<CodeEdit[]>("edits_list", { item, page }),
+  saveEdit: (item: string, page: string, idx: number, hash: string, text: string | null) => invoke<void>("edit_save", { item, page, idx, hash, text }),
   dirList: (path: string) => invoke<DirEntry[]>("dir_list", { path }),
   pathKind: (path: string) => invoke<"chm" | "file" | "folder" | "missing">("path_kind", { path }),
   takeOpened: () => invoke<string[]>("take_opened"),

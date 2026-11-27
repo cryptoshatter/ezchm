@@ -1,3 +1,4 @@
+mod agent;
 mod chm;
 mod db;
 mod files;
@@ -192,6 +193,21 @@ fn file_read(path: String) -> Result<files::TextFile, String> {
 }
 
 #[tauri::command(async)]
+fn file_write(path: String, text: String, encoding: String) -> Result<(), String> {
+    files::write_text(&path, &text, &encoding)
+}
+
+#[tauri::command]
+fn edits_list(state: State<'_, AppState>, item: String, page: String) -> Result<Vec<db::CodeEdit>, String> {
+    db::edits(&*state.conn.lock().map_err(err)?, &item, &page).map_err(err)
+}
+
+#[tauri::command]
+fn edit_save(state: State<'_, AppState>, item: String, page: String, idx: i64, hash: String, text: Option<String>) -> Result<(), String> {
+    db::save_edit(&*state.conn.lock().map_err(err)?, &item, &page, idx, &hash, text.as_deref()).map_err(err)
+}
+
+#[tauri::command(async)]
 fn dir_list(path: String) -> Result<Vec<files::DirEntry>, String> {
     files::list_dir(&path)
 }
@@ -283,6 +299,7 @@ pub fn run() {
         .manage(AppState { conn: Mutex::new(conn), data_dir: dir })
         .manage(Books::default())
         .manage(Pending::default())
+        .manage(agent::Runs::default())
         .manage(StartupError(startup))
         .register_asynchronous_uri_scheme_protocol("chm", |ctx, request, responder| {
             let app = ctx.app_handle().clone();
@@ -307,9 +324,15 @@ pub fn run() {
             chm_search,
             chm_close,
             file_read,
+            file_write,
+            edits_list,
+            edit_save,
             dir_list,
             path_kind,
             take_opened,
+            agent::agent_info,
+            agent::agent_run,
+            agent::agent_stop,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

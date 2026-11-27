@@ -15,10 +15,14 @@ export type Settings = {
   fallbackDialect: Dialect;
   upperKeywords: boolean;
   autoFormat: boolean;
+  autoFold: boolean;
   originalStyle: boolean;
   pageWidth: "normal" | "wide" | "full";
   sidebarOpen: boolean;
   sidebarWidth: number;
+  agentPath: string;
+  agentModel: string;
+  agentWidth: number;
 };
 
 export const DEFAULTS: Settings = {
@@ -34,10 +38,14 @@ export const DEFAULTS: Settings = {
   fallbackDialect: "tsql",
   upperKeywords: true,
   autoFormat: false,
+  autoFold: true,
   originalStyle: false,
   pageWidth: "normal",
   sidebarOpen: true,
   sidebarWidth: 290,
+  agentPath: "",
+  agentModel: "",
+  agentWidth: 400,
 };
 
 function parse(raw: Record<string, string>): Settings {

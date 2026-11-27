@@ -31,6 +31,19 @@ CREATE TABLE bookmarks (
 );
 CREATE INDEX bookmarks_item ON bookmarks(item);
 "#,
+    r#"
+CREATE TABLE code_edits (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    item TEXT NOT NULL,
+    page TEXT NOT NULL,
+    idx INTEGER NOT NULL,
+    hash TEXT NOT NULL,
+    text TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(item, page, idx, hash)
+);
+CREATE INDEX code_edits_page ON code_edits(item, page);
+"#,
 ];
 
 pub const DB_FILE: &str = "data.db";
@@ -235,6 +248,37 @@ pub fn delete_bookmark(conn: &Connection, id: i64) -> rusqlite::Result<()> {
     Ok(())
 }
 
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct CodeEdit {
+    pub idx: i64,
+    pub hash: String,
+    pub text: String,
+    pub updated_at: String,
+}
+
+pub fn edits(conn: &Connection, item: &str, page: &str) -> rusqlite::Result<Vec<CodeEdit>> {
+    let mut st = conn.prepare("SELECT idx, hash, text, updated_at FROM code_edits WHERE item = ?1 AND page = ?2")?;
+    let rows = st.query_map(params![item, page], |r| {
+        Ok(CodeEdit { idx: r.get(0)?, hash: r.get(1)?, text: r.get(2)?, updated_at: r.get(3)? })
+    })?;
+    rows.collect()
+}
+
+pub fn save_edit(conn: &Connection, item: &str, page: &str, idx: i64, hash: &str, text: Option<&str>) -> rusqlite::Result<()> {
+    match text {
+        Some(t) => conn.execute(
+            "INSERT INTO code_edits(item, page, idx, hash, text, updated_at) VALUES(?1, ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT(item, page, idx, hash) DO UPDATE SET text = excluded.text, updated_at = excluded.updated_at",
+            params![item, page, idx, hash, t, now()],
+        )?,
+        None => conn.execute(
+            "DELETE FROM code_edits WHERE item = ?1 AND page = ?2 AND idx = ?3 AND hash = ?4",
+            params![item, page, idx, hash],
+        )?,
+    };
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -256,6 +300,9 @@ mod tests {
         assert_eq!(item(&c, "/a.chm").unwrap().unwrap().page.as_deref(), Some("/x.htm"));
         assert_eq!(bookmarks(&c, "/a.chm").unwrap().len(), 1);
         assert_eq!(settings(&c).unwrap().get("theme").map(|s| s.as_str()), Some("dark"));
+        save_edit(&c, "/a.chm", "/x.htm", 0, "h", Some("select 1")).unwrap();
+        save_edit(&c, "/a.chm", "/x.htm", 0, "h", Some("select 2")).unwrap();
+        assert_eq!(edits(&c, "/a.chm", "/x.htm").unwrap()[0].text, "select 2");
         daily_backup(&c, &dir).unwrap();
         assert!(fs::read_dir(backup_dir(&dir)).unwrap().count() >= 1);
         let _ = fs::remove_dir_all(&dir);

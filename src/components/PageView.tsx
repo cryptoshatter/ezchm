@@ -1,26 +1,36 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { api, errText } from "../api";
-import { CODE_CSS, mountCodeBlock, type Block } from "../lib/codeblock";
+import { CODE_CSS, hashText, mountCodeBlock, normalizeCode, type Block } from "../lib/codeblock";
 import { PAGE_CSS, buildPage, findCodeBlocks, isExternal, markTerms, resolvePath } from "../lib/page";
 import { useSettings } from "../settings";
 import { useFinder, type Finder } from "./finder";
+import { SameOverlay, useSame } from "./same";
+import { wordAtPoint, isIdent } from "../lib/same";
+import type { SelInfo } from "./agent";
 
 export type PageHandle = Finder & {
   scrollRatio: () => number;
   formatAll: () => void;
   hasSql: () => boolean;
+  getShadow: () => ShadowRoot | null;
+  fallback: () => SelInfo | null;
+  identAt: (x: number, y: number, target?: Element | null) => string | null;
+  highlight: (word: string) => void;
 };
 
 type Props = {
   bookId: string;
+  item: string;
   entry: { path: string; terms: string[]; restore: number | null };
   onNavigate: (path: string) => void;
   onLoaded: (realPath: string, title: string) => void;
   onScroll: (ratio: number) => void;
+  onSelUp?: (e: MouseEvent) => void;
+  onCtx?: (e: MouseEvent) => void;
 };
 
-const PageView = forwardRef<PageHandle, Props>(function PageView({ bookId, entry, onNavigate, onLoaded, onScroll }, ref) {
+const PageView = forwardRef<PageHandle, Props>(function PageView({ bookId, item, entry, onNavigate, onLoaded, onScroll, onSelUp, onCtx }, ref) {
   const { settings, codeTheme } = useSettings();
   const scroller = useRef<HTMLDivElement>(null);
   const host = useRef<HTMLDivElement>(null);
@@ -32,8 +42,16 @@ const PageView = forwardRef<PageHandle, Props>(function PageView({ bookId, entry
   opts.current = { settings, codeTheme };
   const nav = useRef(onNavigate);
   nav.current = onNavigate;
+  const evs = useRef({ onSelUp, onCtx });
+  evs.current = { onSelUp, onCtx };
   const current = useRef("");
   const finder = useFinder(() => content.current);
+  const same = useSame(
+    () => content.current,
+    scroller,
+    () => shadow.current,
+    () => true,
+  );
 
   useEffect(() => {
     if (!host.current || shadow.current) return;
@@ -44,9 +62,14 @@ const PageView = forwardRef<PageHandle, Props>(function PageView({ bookId, entry
     sr.append(style, box);
     shadow.current = sr;
     content.current = box;
+    sr.addEventListener("mouseup", (e) => evs.current.onSelUp?.(e as MouseEvent));
+    sr.addEventListener("contextmenu", (e) => evs.current.onCtx?.(e as MouseEvent));
     sr.addEventListener("click", (e) => {
       const a = (e.target as Element | null)?.closest?.("a[href]") as HTMLAnchorElement | null;
-      if (!a) return;
+      if (!a) {
+        same.onClick(e as MouseEvent);
+        return;
+      }
       const href = a.getAttribute("href") ?? "";
       e.preventDefault();
       if (href.startsWith("#")) {
@@ -85,13 +108,24 @@ const PageView = forwardRef<PageHandle, Props>(function PageView({ bookId, entry
         if (cancelled) return;
         setError(null);
         current.current = pg.path;
+        same.clear();
         blocks.current.forEach((b) => b.destroy());
         blocks.current = [];
         box.replaceChildren(buildPage(pg.html, bookId, pg.path, opts.current.settings.originalStyle));
         const page = box.querySelector(".ez-page") as HTMLElement;
-        for (const c of findCodeBlocks(page)) {
-          blocks.current.push(mountCodeBlock(c.host, c.text, opts.current));
-        }
+        const edits = await api.edits(item, pg.path).catch(() => []);
+        if (cancelled) return;
+        const name = (pg.path.split("/").pop() ?? "code").replace(/\.[^.]+$/, "");
+        findCodeBlocks(page).forEach((c, idx) => {
+          const hash = hashText(normalizeCode(c.text));
+          const saved = edits.find((e) => e.idx === idx && e.hash === hash)?.text ?? null;
+          blocks.current.push(
+            mountCodeBlock(c.host, c.text, {
+              ...opts.current,
+              edit: { saved, name: idx ? `${name}_${idx + 1}` : name, save: (t) => api.saveEdit(item, pg.path, idx, hash, t) },
+            }),
+          );
+        });
         const title = new DOMParser().parseFromString(pg.html, "text/html").title.trim();
         onLoaded(pg.path, title);
         const sc = scroller.current!;
@@ -156,17 +190,40 @@ const PageView = forwardRef<PageHandle, Props>(function PageView({ bookId, entry
         });
       },
       hasSql: () => blocks.current.some((b) => b.isSql()),
+      getShadow: () => shadow.current,
+      fallback: () => {
+        const bs = blocks.current;
+        if (bs.length === 1) return { text: bs[0].text(), lang: bs[0].el.dataset.lang || "sql" };
+        const t = (content.current?.innerText ?? "").trim();
+        return t ? { text: t, lang: "text" } : null;
+      },
+      identAt: (x, y, target) => {
+        const w = wordAtPoint(x, y, shadow.current, target);
+        return w && isIdent(w) ? w : null;
+      },
+      highlight: (w) => same.apply(w),
     }),
     [finder],
   );
 
   return (
-    <div className="page-scroll" ref={scroller}>
-      <div className={`page-wrap w-${settings.pageWidth}`}>
-        {error && <div className="page-error">{error}</div>}
-        <div ref={host} />
+    <>
+      <div className="page-scroll" ref={scroller}>
+        <div className={`page-wrap w-${settings.pageWidth}`}>
+          {error && <div className="page-error">{error}</div>}
+          <div ref={host} />
+        </div>
       </div>
-    </div>
+      <SameOverlay
+        st={same.st}
+        nav={same.nav}
+        clear={same.clear}
+        onJump={(at) => {
+          const sc = scroller.current;
+          if (sc) sc.scrollTo({ top: at * sc.scrollHeight - sc.clientHeight / 2, behavior: "smooth" });
+        }}
+      />
+    </>
   );
 });
 
