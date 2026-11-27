@@ -1,0 +1,55 @@
+name: 生成签名密钥
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  keygen:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
+    steps:
+      - name: 检查令牌
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::error::还没有填 RELEASES_TOKEN"
+            exit 1
+          fi
+          if gh secret list -R "${{ github.repository }}" | awk '{print $1}' | grep -qx TAURI_SIGNING_PRIVATE_KEY; then
+            echo "::error::TAURI_SIGNING_PRIVATE_KEY 已存在。重新生成会让已安装的版本无法在线更新，如确需更换请先手动删除这个 secret。"
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.RELEASES_TOKEN }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: 生成密钥并写入 secrets
+        run: |
+          K="$RUNNER_TEMP/ezchm.key"
+          npx --yes @tauri-apps/cli@2 signer generate --ci -w "$K" -p ""
+          gh secret set TAURI_SIGNING_PRIVATE_KEY -R "${{ github.repository }}" < "$K"
+          PUB=$(cat "$K.pub")
+          rm -f "$K"
+          node -e '
+            const f = "src-tauri/tauri.conf.json";
+            const c = require("./" + f);
+            c.plugins.updater.pubkey = process.argv[1];
+            require("fs").writeFileSync(f, JSON.stringify(c, null, 2) + "\n");
+          ' "$PUB"
+          echo "公钥：$PUB" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: 提交公钥
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src-tauri/tauri.conf.json
+          git commit -m "写入更新签名公钥"
+          git push
